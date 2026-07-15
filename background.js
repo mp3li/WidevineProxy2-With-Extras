@@ -11,6 +11,7 @@ import { RemoteCdm } from "./lib/remote_cdm.js";
 
 
 let manifests = new Map();
+let subtitles = new Map();
 let requests = new Map();
 let sessions = new Map();
 let logs = [];
@@ -61,7 +62,8 @@ async function parseClearKey(body, sendResponse, tab_url) {
         keys: formatted_keys,
         url: tab_url,
         timestamp: Math.floor(Date.now() / 1000),
-        manifests: manifests.has(tab_url) ? manifests.get(tab_url) : []
+        manifests: manifests.has(tab_url) ? manifests.get(tab_url) : [],
+        subtitles: subtitles.has(tab_url) ? subtitles.get(tab_url) : []
     }
     logs.push(log);
 
@@ -138,7 +140,8 @@ async function parseLicense(body, sendResponse, tab_url) {
         keys: keys,
         url: tab_url,
         timestamp: Math.floor(Date.now() / 1000),
-        manifests: manifests.has(tab_url) ? manifests.get(tab_url) : []
+        manifests: manifests.has(tab_url) ? manifests.get(tab_url) : [],
+        subtitles: subtitles.has(tab_url) ? subtitles.get(tab_url) : []
     }
     logs.push(log);
     await AsyncLocalStorage.setStorage({[pssh]: log});
@@ -235,7 +238,8 @@ async function parseLicenseRemote(body, sendResponse, tab_url) {
         keys: keys,
         url: tab_url,
         timestamp: Math.floor(Date.now() / 1000),
-        manifests: manifests.has(tab_url) ? manifests.get(tab_url) : []
+        manifests: manifests.has(tab_url) ? manifests.get(tab_url) : [],
+        subtitles: subtitles.has(tab_url) ? subtitles.get(tab_url) : []
     }
     logs.push(log);
     await AsyncLocalStorage.setStorage({[session_id.pssh]: log});
@@ -253,6 +257,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 if (!await SettingsManager.getEnabled()) {
                     sendResponse(message.body);
                     manifests.clear();
+                    subtitles.clear();
                     return;
                 }
 
@@ -279,6 +284,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 if (!await SettingsManager.getEnabled()) {
                     sendResponse(message.body);
                     manifests.clear();
+                    subtitles.clear();
                     return;
                 }
 
@@ -329,6 +335,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             case "CLEAR":
                 logs = [];
                 manifests.clear();
+                subtitles.clear();
                 IconManager.setDefaultIcon();
                 break;
             case "MANIFEST":
@@ -349,6 +356,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     }
                 }
                 sendResponse();
+                break;
+            case "SUBTITLE":
+                const subtitleData = JSON.parse(message.body);
+                const subtitleElement = {
+                    url: subtitleData.url,
+                    headers: requests.has(subtitleData.url) ? requests.get(subtitleData.url) : [],
+                };
+
+                if (!subtitles.has(tab_url)) {
+                    subtitles.set(tab_url, [subtitleElement]);
+                } else {
+                    let elements = subtitles.get(tab_url);
+                    if (!elements.some(e => e.url === subtitleData.url)) {
+                        elements.push(subtitleElement);
+                        subtitles.set(tab_url, elements);
+                    }
+                }
+                sendResponse();
+                break;
         }
     })();
     return true;

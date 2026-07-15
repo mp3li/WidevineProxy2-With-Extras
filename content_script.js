@@ -31,6 +31,53 @@
         }
     }
 
+    const isSubtitleCandidate = (value) => {
+        const normalized = (value || "").toLowerCase();
+        return normalized.includes("subtitle") || normalized.includes("subtitles") || normalized.includes(".srt") || normalized.includes(".vtt") || normalized.includes(".dtt");
+    }
+
+    const extractSubtitleUrlsFromText = (text) => {
+        if (!text) {
+            return [];
+        }
+
+        const urls = [];
+        const seen = new Set();
+        const regex = /(https?:\/\/[^\s"'<>]+)/gi;
+        const matches = text.matchAll(regex);
+
+        for (const match of matches) {
+            const candidate = match[1];
+            if (!candidate || !isSubtitleCandidate(candidate)) {
+                continue;
+            }
+
+            if (!seen.has(candidate)) {
+                seen.add(candidate);
+                urls.push(candidate);
+            }
+        }
+
+        return urls;
+    }
+
+    async function emitSubtitleIfNeeded(url, body) {
+        const candidates = [];
+
+        if (url && isSubtitleCandidate(url)) {
+            candidates.push(url);
+        }
+
+        if (body) {
+            candidates.push(...extractSubtitleUrlsFromText(body));
+        }
+
+        const uniqueCandidates = [...new Set(candidates)];
+        for (const candidate of uniqueCandidates) {
+            await emitAndWaitForResponse("SUBTITLE", JSON.stringify({ url: candidate }));
+        }
+    }
+
     function emitAndWaitForResponse(type, data) {
         return new Promise((resolve) => {
             const requestId = Math.random().toString(16).substring(2, 9);
@@ -163,6 +210,8 @@
                         type: manifest_type,
                     }));
                 }
+
+                await emitSubtitleIfNeeded(thisArg.responseURL, body);
             }
         });
 
@@ -187,6 +236,9 @@
                         }));
                     }
                 }
+
+                const url = typeof args[0] === "string" ? args[0] : args[0]?.url;
+                await emitSubtitleIfNeeded(url, text);
             }
         } catch (err) {
             console.debug("Manifest intercept failed:", err);

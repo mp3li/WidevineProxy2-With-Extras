@@ -136,6 +136,7 @@ downloader_name.addEventListener('input', async function (){
 const downloader_args = document.getElementById('downloader-args');
 downloader_args.addEventListener('input', async function (){
     await SettingsManager.saveAdditionalArguments(downloader_args.value);
+    await refreshGeneratedCommands();
 });
 // =================================================
 
@@ -146,6 +147,54 @@ clear.addEventListener('click', async function() {
     key_container.innerHTML = "";
 });
 
+function formatHeaders(headers, option, quoteChar, safeQuoteChar) {
+    return Object.entries(headers || {}).map(
+        ([key, value]) => `${option} ${quoteChar}${key}: ${String(value).replaceAll(quoteChar, safeQuoteChar)}${quoteChar}`
+    ).join(' ');
+}
+
+function getOutputDirectory(additionalArgs) {
+    const saveDirMatch = String(additionalArgs || '').match(
+        /(?:^|\s)--save-dir(?:\s+|=)(?:"([^"]+)"|'([^']+)'|(\S+))/
+    );
+
+    return saveDirMatch ? (saveDirMatch[1] || saveDirMatch[2] || saveDirMatch[3]) : '.';
+}
+
+function joinOutputPath(outputDirectory, filename) {
+    return outputDirectory === '.' ? filename : `${outputDirectory.replace(/[\\/]+$/, '')}/${filename}`;
+}
+
+function createExternalSubtitleCommands(subtitles, outputDirectory, quoteChar, safeQuoteChar) {
+    const seenUrls = new Set();
+    const uniqueSubtitles = (subtitles || []).filter((subtitle) => {
+        if (!subtitle?.url || seenUrls.has(subtitle.url)) {
+            return false;
+        }
+
+        seenUrls.add(subtitle.url);
+        return true;
+    });
+
+    return uniqueSubtitles.map((subtitle, index) => {
+        const suffix = String(index + 1).padStart(2, '0');
+        const temporaryFile = joinOutputPath(outputDirectory, `subtitle-${suffix}.vtt`);
+        const outputFile = joinOutputPath(outputDirectory, `subtitle-${suffix}.srt`);
+        const headers = formatHeaders(subtitle.headers, '-H', quoteChar, safeQuoteChar);
+
+        return [
+            'curl --fail --location --silent --show-error',
+            headers,
+            `--output ${quoteChar}${temporaryFile}${quoteChar}`,
+            `${quoteChar}${subtitle.url}${quoteChar}`,
+            '&&',
+            `ffmpeg -y -i ${quoteChar}${temporaryFile}${quoteChar} ${quoteChar}${outputFile}${quoteChar}`,
+            '&&',
+            `rm -f ${quoteChar}${temporaryFile}${quoteChar}`,
+        ].filter(Boolean).join(' ');
+    });
+}
+
 async function createCommand(json, key_string) {
     const metadata = JSON.parse(json);
 
@@ -154,14 +203,43 @@ async function createCommand(json, key_string) {
     const useSingleQuotes = await SettingsManager.getUseSingleQuotes();
     const quoteChar = useSingleQuotes ? "'" : '"';
     const safeQuoteChar = useSingleQuotes ? '"' : "'";
-    const headerString = Object.entries(metadata.headers).map(
-        ([key, value]) => `-H ${quoteChar}${key}: ${value.replaceAll(quoteChar, safeQuoteChar)}${quoteChar}`
-    ).join(' ');
+    const headerString = formatHeaders(metadata.headers, '-H', quoteChar, safeQuoteChar);
 
     const executableName = await SettingsManager.getExecutableName();
     const useShaka = await SettingsManager.getUseShakaPackager();
     const additionalArgs = await SettingsManager.getAdditionalArguments();
-    return `${executableName} ${quoteChar}${metadata.url}${quoteChar} ${headerString} ${key_string} ${useShaka ? "--use-shaka-packager " : ""}${additionalArgs}`;
+    // Keep the user's downloader arguments as the source of truth. In
+    // particular, do not add or rewrite subtitle selectors here.
+    const commandParts = [
+        executableName,
+        `${quoteChar}${metadata.url}${quoteChar}`,
+        headerString,
+        key_string,
+        useShaka ? "--use-shaka-packager" : "",
+        additionalArgs,
+    ].filter(Boolean);
+
+    const videoCommand = commandParts.join(' ');
+    const subtitleCommands = createExternalSubtitleCommands(
+        metadata.subtitles,
+        getOutputDirectory(additionalArgs),
+        quoteChar,
+        safeQuoteChar
+    );
+
+    return [videoCommand, ...subtitleCommands].join(' && ');
+}
+
+async function refreshGeneratedCommands() {
+    for (const logContainer of key_container.querySelectorAll('.log-container')) {
+        const command = logContainer.querySelector('#command');
+        const manifest = logContainer.querySelector('#manifest');
+        const keys = logContainer.querySelector('.key-copy input');
+
+        if (command && manifest && keys) {
+            command.value = await createCommand(manifest.value, keys.value);
+        }
+    }
 }
 
 async function appendLog(result) {
@@ -208,7 +286,10 @@ async function appendLog(result) {
             command.value = await createCommand(select.value, key_string);
         });
         result.manifests.forEach((manifest) => {
-            const option = new Option(`[${manifest.type}] ${manifest.url}`, JSON.stringify(manifest));
+            const option = new Option(
+                `[${manifest.type}] ${manifest.url}`,
+                JSON.stringify({ ...manifest, subtitles: result.subtitles || [] })
+            );
             select.add(option);
         });
         command.value = await createCommand(select.value, key_string);
