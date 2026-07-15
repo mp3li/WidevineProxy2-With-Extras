@@ -2,6 +2,25 @@
 An extension-based proxy for Widevine EME challenges and license messages. \
 Modifies the challenge before it reaches the web player and retrieves the decryption keys from the response.
 
+## What's Different in This Fork
+
+This fork retains the upstream GPL-3.0 license and adds a subtitle-aware
+command workflow:
+
+- Detects subtitle URLs observed separately in page network activity, including
+  links present in text responses.
+- Carries the associated request headers into generated follow-up subtitle
+  download commands.
+- Downloads captured subtitle files beside the video output and converts VTT
+  files to SRT with `ffmpeg`.
+- Keeps the Additional arguments field authoritative, so your N_m3u8DL-RE
+  video, audio, subtitle, and muxing selections are preserved in the generated
+  command.
+- Refreshes existing displayed commands when Additional arguments change.
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete, maintained record of fork
+changes. New behavior is added here only after it has been verified.
+
 ## Features
 + User-friendly / GUI-based
 + Bypasses one-time tokens, hashes, and license wrapping
