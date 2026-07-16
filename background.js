@@ -15,6 +15,25 @@ let subtitles = new Map();
 let requests = new Map();
 let sessions = new Map();
 let logs = [];
+const subtitleCaptureWindowMs = 60 * 1000;
+
+function getSubtitleIdentity(subtitle) {
+    try {
+        const url = new URL(subtitle.url);
+        // Signed CDN URLs for the same sidecar can be requested more than once
+        // with fresh query values. Keep the latest usable request, rather than
+        // emitting multiple downloads for the same file.
+        return `${url.origin}${url.pathname}`;
+    } catch {
+        return subtitle.url;
+    }
+}
+
+function getSubtitlesNearTime(tabUrl, timestampMs) {
+    return (subtitles.get(tabUrl) || []).filter((subtitle) =>
+        Math.abs((subtitle.capturedAt || 0) - timestampMs) <= subtitleCaptureWindowMs
+    );
+}
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
     function(details) {
@@ -63,11 +82,12 @@ async function parseClearKey(body, sendResponse, tab_url) {
         url: tab_url,
         timestamp: Math.floor(Date.now() / 1000),
         manifests: manifests.has(tab_url) ? manifests.get(tab_url) : [],
-        subtitles: subtitles.has(tab_url) ? subtitles.get(tab_url) : []
+        subtitles: getSubtitlesNearTime(tab_url, Date.now())
     }
     logs.push(log);
 
     await AsyncLocalStorage.setStorage({[pssh_data]: log});
+    subtitles.delete(tab_url);
     sendResponse();
 }
 
@@ -141,12 +161,13 @@ async function parseLicense(body, sendResponse, tab_url) {
         url: tab_url,
         timestamp: Math.floor(Date.now() / 1000),
         manifests: manifests.has(tab_url) ? manifests.get(tab_url) : [],
-        subtitles: subtitles.has(tab_url) ? subtitles.get(tab_url) : []
+        subtitles: getSubtitlesNearTime(tab_url, Date.now())
     }
     logs.push(log);
     await AsyncLocalStorage.setStorage({[pssh]: log});
     IconManager.setNotificationIcon();
 
+    subtitles.delete(tab_url);
     sessions.delete(loaded_request_id);
     sendResponse();
 }
@@ -239,11 +260,12 @@ async function parseLicenseRemote(body, sendResponse, tab_url) {
         url: tab_url,
         timestamp: Math.floor(Date.now() / 1000),
         manifests: manifests.has(tab_url) ? manifests.get(tab_url) : [],
-        subtitles: subtitles.has(tab_url) ? subtitles.get(tab_url) : []
+        subtitles: getSubtitlesNearTime(tab_url, Date.now())
     }
     logs.push(log);
     await AsyncLocalStorage.setStorage({[session_id.pssh]: log});
 
+    subtitles.delete(tab_url);
     sessions.delete(loaded_request_id);
     sendResponse();
 }
@@ -361,16 +383,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const subtitleData = JSON.parse(message.body);
                 const subtitleElement = {
                     url: subtitleData.url,
-                    headers: requests.has(subtitleData.url) ? requests.get(subtitleData.url) : [],
+                    language: subtitleData.language || null,
+                    observedDirectly: subtitleData.observedDirectly === true,
+                    capturedAt: Date.now(),
+                    headers: requests.has(subtitleData.url)
+                        ? requests.get(subtitleData.url)
+                        : (requests.has(subtitleData.sourceUrl) ? requests.get(subtitleData.sourceUrl) : []),
                 };
 
                 if (!subtitles.has(tab_url)) {
                     subtitles.set(tab_url, [subtitleElement]);
                 } else {
                     let elements = subtitles.get(tab_url);
-                    if (!elements.some(e => e.url === subtitleData.url)) {
+                    const existingSubtitle = elements.find(
+                        e => getSubtitleIdentity(e) === getSubtitleIdentity(subtitleElement)
+                    );
+                    if (!existingSubtitle) {
                         elements.push(subtitleElement);
                         subtitles.set(tab_url, elements);
+                    } else {
+                        existingSubtitle.url = subtitleElement.url;
+                        existingSubtitle.headers = subtitleElement.headers;
+                        existingSubtitle.language = subtitleElement.language || existingSubtitle.language;
+                        existingSubtitle.observedDirectly ||= subtitleElement.observedDirectly;
+                        existingSubtitle.capturedAt = subtitleElement.capturedAt;
                     }
                 }
                 sendResponse();

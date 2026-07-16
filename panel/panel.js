@@ -165,34 +165,191 @@ function joinOutputPath(outputDirectory, filename) {
     return outputDirectory === '.' ? filename : `${outputDirectory.replace(/[\\/]+$/, '')}/${filename}`;
 }
 
-function createExternalSubtitleCommands(subtitles, outputDirectory, quoteChar, safeQuoteChar) {
-    const seenUrls = new Set();
-    const uniqueSubtitles = (subtitles || []).filter((subtitle) => {
-        if (!subtitle?.url || seenUrls.has(subtitle.url)) {
-            return false;
+const languageCodeAliases = {
+    ara: 'ar', bul: 'bg', cat: 'ca', ces: 'cs', chi: 'zh', cze: 'cs', dan: 'da',
+    deu: 'de', dut: 'nl', ell: 'el', eng: 'en', fin: 'fi', fra: 'fr', fre: 'fr',
+    ger: 'de', gre: 'el', heb: 'he', hin: 'hi', hrv: 'hr', hun: 'hu', ind: 'id',
+    ita: 'it', jpn: 'ja', kor: 'ko', msa: 'ms', nld: 'nl', nor: 'no', pol: 'pl',
+    por: 'pt', ron: 'ro', rum: 'ro', rus: 'ru', slk: 'sk', slo: 'sk', spa: 'es',
+    srp: 'sr', swe: 'sv', tha: 'th', tur: 'tr', ukr: 'uk', vie: 'vi', zho: 'zh',
+};
+
+function normalizeSubtitleLanguage(value) {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const normalized = value.trim().replace(/_/g, '-').toLowerCase();
+    if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(normalized)) {
+        return null;
+    }
+
+    const [primary, ...subtags] = normalized.split('-');
+    return [languageCodeAliases[primary] || primary, ...subtags].join('-');
+}
+
+function getSubtitleLanguage(subtitle) {
+    const capturedLanguage = normalizeSubtitleLanguage(subtitle.language);
+    if (capturedLanguage) {
+        return capturedLanguage;
+    }
+
+    try {
+        const parsed = new URL(subtitle.url);
+        for (const key of [
+            'language', 'lang', 'locale', 'srclang', 'subtitle_language', 'subtitleLanguage',
+            'languageCode', 'language_code', 'localeCode', 'locale_code', 'iso', 'isoCode', 'iso_code',
+        ]) {
+            const language = normalizeSubtitleLanguage(parsed.searchParams.get(key));
+            if (language) {
+                return language;
+            }
         }
 
-        seenUrls.add(subtitle.url);
-        return true;
-    });
+        const nonLanguagePathTokens = new Set([
+            'api', 'caption', 'captions', 'dtt', 'dfxp', 'manifest', 'master', 'mpd',
+            'srt', 'sub', 'subs', 'subtitle', 'subtitles', 'track', 'tracks', 'ttml', 'vtt',
+        ]);
+        const pathLanguageMatches = [...decodeURIComponent(parsed.pathname).matchAll(
+            /(?:^|[._/-])([a-z]{2,3}(?:[-_][a-z0-9]{2,8})?)(?=[._/-]|$)/gi
+        )].reverse();
+        for (const match of pathLanguageMatches) {
+            const language = normalizeSubtitleLanguage(match[1]);
+            if (language && !nonLanguagePathTokens.has(language)) {
+                return language;
+            }
+        }
+    } catch {
+        // An invalid URL cannot produce a usable language hint.
+    }
 
+    return 'und';
+}
+
+function createSubtitleSpinnerFunction() {
+    return [
+        'mp3li_subtitle_spinner() {',
+        'local pid="$1" message="$2" frame_index=0 frame;',
+        'while kill -0 "$pid" 2>/dev/null; do',
+        'case $((frame_index % 4)) in 0) frame="|" ;; 1) frame="/" ;; 2) frame="-" ;; *) frame="\\\\" ;; esac;',
+        'printf "\\rmp3li note: %s %s" "$message" "$frame";',
+        'frame_index=$((frame_index + 1)); sleep 0.1;',
+        'done;',
+        'printf "\\r\\033[K\\n\\n";',
+        '}',
+    ].join(' ');
+}
+
+function isSubtitleFileUrl(value) {
+    return /\.(?:srt|vtt|webvtt|dtt|ttml|dfxp|ass|ssa)(?:[?#]|$)/i.test(value || '');
+}
+
+function getSubtitleAssetIdentity(subtitle) {
+    try {
+        const parsed = new URL(subtitle.url);
+        const match = parsed.pathname.match(
+            /^(.*)\/(?:srt|vtt|webvtt)\/(.+)-\d{10,}\.(?:srt|vtt|webvtt)$/i
+        );
+        return match ? `${parsed.origin}${match[1]}/${match[2]}` : subtitle.url;
+    } catch {
+        return subtitle.url;
+    }
+}
+
+function getSubtitlePreference(subtitle) {
+    if (subtitle.observedDirectly) {
+        return 100;
+    }
+    return /\.(?:vtt|webvtt)(?:[?#]|$)/i.test(subtitle.url) ? 10
+        : /\.srt(?:[?#]|$)/i.test(subtitle.url) ? 9
+            : 0;
+}
+
+function getUniqueSubtitleFiles(subtitles) {
+    const selected = new Map();
+    for (const subtitle of subtitles || []) {
+        if (!subtitle?.url || !isSubtitleFileUrl(subtitle.url)) {
+            continue;
+        }
+
+        const assetIdentity = getSubtitleAssetIdentity(subtitle);
+        const existing = selected.get(assetIdentity);
+        if (!existing || getSubtitlePreference(subtitle) > getSubtitlePreference(existing)) {
+            selected.set(assetIdentity, subtitle);
+        }
+    }
+    return [...selected.values()];
+}
+
+function createExternalSubtitleCommands(subtitles, outputDirectory, quoteChar, safeQuoteChar) {
+    const uniqueSubtitles = getUniqueSubtitleFiles(subtitles);
+
+    const languageOccurrences = new Map();
     return uniqueSubtitles.map((subtitle, index) => {
-        const suffix = String(index + 1).padStart(2, '0');
-        const temporaryFile = joinOutputPath(outputDirectory, `subtitle-${suffix}.vtt`);
-        const outputFile = joinOutputPath(outputDirectory, `subtitle-${suffix}.srt`);
-        const headers = formatHeaders(subtitle.headers, '-H', quoteChar, safeQuoteChar);
+        const language = getSubtitleLanguage(subtitle);
+        const occurrence = (languageOccurrences.get(language) || 0) + 1;
+        languageOccurrences.set(language, occurrence);
 
-        return [
-            'curl --fail --location --silent --show-error',
+        const subtitleName = occurrence === 1
+            ? `${language}.srt`
+            : `${language}-${String(occurrence).padStart(2, '0')}.srt`;
+        const temporaryFile = joinOutputPath(outputDirectory, `.${subtitleName}.vtt`);
+        const outputFile = joinOutputPath(outputDirectory, subtitleName);
+        const headers = formatHeaders(subtitle.headers, '-H', quoteChar, safeQuoteChar);
+        const sourceIsSrt = /\.srt(?:[?#]|$)/i.test(subtitle.url);
+
+        const curlCommand = [
+            'curl --fail --location --silent --show-error --connect-timeout 20 --max-time 120',
             headers,
-            `--output ${quoteChar}${temporaryFile}${quoteChar}`,
+            `--output ${quoteChar}${sourceIsSrt ? outputFile : temporaryFile}${quoteChar}`,
             `${quoteChar}${subtitle.url}${quoteChar}`,
-            '&&',
-            `ffmpeg -y -i ${quoteChar}${temporaryFile}${quoteChar} ${quoteChar}${outputFile}${quoteChar}`,
-            '&&',
-            `rm -f ${quoteChar}${temporaryFile}${quoteChar}`,
         ].filter(Boolean).join(' ');
+        const downloadCommand = [
+            curlCommand,
+            sourceIsSrt ? '' : '&&',
+            sourceIsSrt ? '' : `ffmpeg -hide_banner -loglevel error -nostats -y -i ${quoteChar}${temporaryFile}${quoteChar} ${quoteChar}${outputFile}${quoteChar}`,
+            sourceIsSrt ? '' : '&&',
+            sourceIsSrt ? '' : `rm -f ${quoteChar}${temporaryFile}${quoteChar}`,
+        ].filter(Boolean).join(' ');
+
+        const subtitleCount = uniqueSubtitles.length;
+        const statusMessage = `Downloading... (${index + 1}/${subtitleCount})`;
+        const logFile = joinOutputPath(outputDirectory, `.${subtitleName}.download.log`);
+        return [
+            '() {',
+            'emulate -L zsh;',
+            'setopt no_monitor;',
+            `local mp3li_subtitle_log=${quoteChar}${logFile}${quoteChar} mp3li_subtitle_job;`,
+            `( ${downloadCommand} ) > "$mp3li_subtitle_log" 2>&1 &`,
+            'mp3li_subtitle_job=$!;',
+            `mp3li_subtitle_spinner "$mp3li_subtitle_job" ${quoteChar}${statusMessage}${quoteChar};`,
+            'if wait "$mp3li_subtitle_job"; then rm -f "$mp3li_subtitle_log"; else cat "$mp3li_subtitle_log" >&2; rm -f "$mp3li_subtitle_log"; return 1; fi;',
+            '}',
+        ].join(' ');
     });
+}
+
+function createSubtitleStatusCommand(subtitleCount, quoteChar) {
+    const scopeNote = 'mp3li note: If above reported 0 subtitle streams above, that count only reflects manifest tracks. This fork also checks separately observed subtitle requests.';
+    const resultNote = subtitleCount > 0
+        ? `mp3li note: ${subtitleCount} ${subtitleCount === 1 ? 'subtitle' : 'subtitles'} found. Downloading...`
+        : 'mp3li note: No separately captured subtitle files were found.';
+    return `printf '\\n%s\\n\\n%s\\n\\n' ${quoteChar}${scopeNote}${quoteChar} ${quoteChar}${resultNote}${quoteChar}`;
+}
+
+function createWorkDirectoryCleanupCommand(outputDirectory, quoteChar) {
+    const workDirectoryPattern = 'master-????????-????-????-????-????????????_????-??-??_??-??-??';
+    return [
+        'find',
+        `${quoteChar}${outputDirectory}${quoteChar}`,
+        '-type d',
+        `-name ${quoteChar}${workDirectoryPattern}${quoteChar}`,
+        '-prune -exec rm -rf {} +',
+    ].join(' ');
+}
+
+function createCompletionCommand(quoteChar) {
+    return `printf '\\n%s\\n' ${quoteChar}mp3li note: Complete. Output is ready.${quoteChar}`;
 }
 
 async function createCommand(json, key_string) {
@@ -226,8 +383,20 @@ async function createCommand(json, key_string) {
         quoteChar,
         safeQuoteChar
     );
+    const subtitleCount = subtitleCommands.length;
+    const subtitleStatusCommand = createSubtitleStatusCommand(subtitleCount, quoteChar);
+    const subtitleSpinnerFunction = subtitleCommands.length > 0 ? createSubtitleSpinnerFunction() : '';
+    const cleanupCommand = createWorkDirectoryCleanupCommand(getOutputDirectory(additionalArgs), quoteChar);
+    const completionCommand = createCompletionCommand(quoteChar);
 
-    return [videoCommand, ...subtitleCommands].join(' && ');
+    return [
+        videoCommand,
+        subtitleStatusCommand,
+        subtitleSpinnerFunction,
+        ...subtitleCommands,
+        cleanupCommand,
+        completionCommand,
+    ].filter(Boolean).join(' && ');
 }
 
 async function refreshGeneratedCommands() {

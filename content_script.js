@@ -31,50 +31,271 @@
         }
     }
 
-    const isSubtitleCandidate = (value) => {
-        const normalized = (value || "").toLowerCase();
-        return normalized.includes("subtitle") || normalized.includes("subtitles") || normalized.includes(".srt") || normalized.includes(".vtt") || normalized.includes(".dtt");
-    }
+    const subtitleContextPattern = /subtitle|subtitles|caption|captions|closed.?caption|\bcc\b/i;
+    // Only follow a directly downloadable subtitle sidecar. Network requests
+    // whose URL merely mentions "subtitle" are often API/metadata endpoints,
+    // not a subtitle file that curl can save and ffmpeg can convert.
+    const subtitleFilePattern = /\.(?:srt|vtt|webvtt|dtt|ttml|dfxp|ass|ssa)(?:[?#]|$)/i;
+    const languageKeys = [
+        "language", "lang", "locale", "srclang", "subtitle_language", "subtitleLanguage",
+        "languageCode", "language_code", "localeCode", "locale_code", "iso", "isoCode", "iso_code",
+    ];
+    const languageTextKeys = ["label", "title", "name", "displayName", "display_name"];
+    const languageCodeAliases = {
+        ara: "ar", bul: "bg", cat: "ca", ces: "cs", chi: "zh", cze: "cs", dan: "da",
+        deu: "de", dut: "nl", ell: "el", eng: "en", fin: "fi", fra: "fr", fre: "fr",
+        ger: "de", gre: "el", heb: "he", hin: "hi", hrv: "hr", hun: "hu", ind: "id",
+        ita: "it", jpn: "ja", kor: "ko", msa: "ms", nld: "nl", nor: "no", pol: "pl",
+        por: "pt", ron: "ro", rum: "ro", rus: "ru", slk: "sk", slo: "sk", spa: "es",
+        srp: "sr", swe: "sv", tha: "th", tur: "tr", ukr: "uk", vie: "vi", zho: "zh",
+    };
+    const nonLanguagePathTokens = new Set([
+        "api", "caption", "captions", "dtt", "dfxp", "manifest", "master", "mpd",
+        "srt", "sub", "subs", "subtitle", "subtitles", "track", "tracks", "ttml", "vtt",
+    ]);
 
-    const extractSubtitleUrlsFromText = (text) => {
-        if (!text) {
-            return [];
+    const normalizeLanguage = (value) => {
+        if (typeof value !== "string") {
+            return null;
         }
 
-        const urls = [];
-        const seen = new Set();
-        const regex = /(https?:\/\/[^\s"'<>]+)/gi;
-        const matches = text.matchAll(regex);
+        const normalized = value.trim().replace(/_/g, "-").toLowerCase();
+        if (!/^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(normalized)) {
+            return null;
+        }
 
-        for (const match of matches) {
-            const candidate = match[1];
-            if (!candidate || !isSubtitleCandidate(candidate)) {
+        const [primary, ...subtags] = normalized.split("-");
+        return [languageCodeAliases[primary] || primary, ...subtags].join("-");
+    };
+
+    const getLanguageFromText = (value) => {
+        const directLanguage = normalizeLanguage(value);
+        if (directLanguage) {
+            return directLanguage;
+        }
+
+        if (typeof value !== "string") {
+            return null;
+        }
+
+        const normalized = value.toLowerCase();
+        const namedLanguages = [
+            ["english", "en"], ["french", "fr"], ["spanish", "es"], ["german", "de"],
+            ["italian", "it"], ["portuguese", "pt"], ["japanese", "ja"], ["korean", "ko"],
+            ["chinese", "zh"], ["russian", "ru"], ["arabic", "ar"], ["dutch", "nl"],
+            ["swedish", "sv"], ["norwegian", "no"], ["danish", "da"], ["finnish", "fi"],
+            ["polish", "pl"], ["turkish", "tr"], ["ukrainian", "uk"], ["hebrew", "he"],
+            ["greek", "el"], ["romanian", "ro"], ["czech", "cs"], ["hungarian", "hu"],
+            ["bulgarian", "bg"], ["croatian", "hr"], ["serbian", "sr"], ["slovak", "sk"],
+            ["vietnamese", "vi"], ["thai", "th"], ["indonesian", "id"], ["malay", "ms"],
+        ];
+        for (const [name, code] of namedLanguages) {
+            if (normalized.includes(name)) {
+                if (code === "en") {
+                    if (/\b(?:gb|uk|british|great britain)\b/.test(normalized)) {
+                        return "en-gb";
+                    }
+                    if (/\b(?:us|usa|american)\b/.test(normalized)) {
+                        return "en-us";
+                    }
+                }
+                if (code === "pt" && /\b(?:br|brazil|brazilian)\b/.test(normalized)) {
+                    return "pt-br";
+                }
+                return code;
+            }
+        }
+
+        const languageMatch = normalized.match(/\b([a-z]{2,3}(?:[-_][a-z0-9]{2,8})?)\b/i);
+        if (languageMatch) {
+            return normalizeLanguage(languageMatch[1]);
+        }
+
+        return null;
+    };
+
+    const getLanguageFromUrl = (value) => {
+        try {
+            const parsed = new URL(value, window.location.href);
+
+            for (const key of languageKeys) {
+                const language = getLanguageFromText(parsed.searchParams.get(key));
+                if (language) {
+                    return language;
+                }
+            }
+
+            const pathLanguageMatches = [...decodeURIComponent(parsed.pathname).matchAll(
+                /(?:^|[._/-])([a-z]{2,3}(?:[-_][a-z0-9]{2,8})?)(?=[._/-]|$)/gi
+            )].reverse();
+            for (const match of pathLanguageMatches) {
+                const language = normalizeLanguage(match[1]);
+                if (language && !nonLanguagePathTokens.has(match[1].toLowerCase())) {
+                    return language;
+                }
+            }
+        } catch {
+            // Ignore malformed URLs; they are not usable command inputs.
+        }
+
+        return null;
+    };
+
+    const isSubtitleFileUrl = (value) => subtitleFilePattern.test(value || "");
+
+    const addSubtitleCandidate = (
+        candidates,
+        url,
+        language = null,
+        sourceUrl = window.location.href,
+        observedDirectly = false
+    ) => {
+        if (!url || typeof url !== "string") {
+            return;
+        }
+
+        let resolvedUrl;
+        try {
+            resolvedUrl = new URL(url, sourceUrl).href;
+        } catch {
+            return;
+        }
+
+        if (!isSubtitleFileUrl(resolvedUrl)) {
+            return;
+        }
+
+        const existing = candidates.get(resolvedUrl);
+        const resolvedLanguage = getLanguageFromText(language) || getLanguageFromUrl(resolvedUrl);
+        if (!existing
+            || (!existing.language && resolvedLanguage)
+            || (observedDirectly && !existing.observedDirectly)) {
+            candidates.set(resolvedUrl, {
+                url: resolvedUrl,
+                language: resolvedLanguage || existing?.language || null,
+                observedDirectly: observedDirectly || existing?.observedDirectly || false,
+            });
+        }
+    };
+
+    const getObjectLanguage = (value) => {
+        for (const key of languageKeys) {
+            const language = getLanguageFromText(value?.[key]);
+            if (language) {
+                return language;
+            }
+        }
+
+        for (const key of languageTextKeys) {
+            const language = getLanguageFromText(value?.[key]);
+            if (language) {
+                return language;
+            }
+        }
+
+        return null;
+    };
+
+    const extractSubtitleUrlsFromJson = (
+        value,
+        candidates,
+        sourceUrl,
+        inheritedLanguage = null,
+        subtitleContext = false
+    ) => {
+        if (Array.isArray(value)) {
+            value.forEach((item) => extractSubtitleUrlsFromJson(item, candidates, sourceUrl, inheritedLanguage, subtitleContext));
+            return;
+        }
+
+        if (!value || typeof value !== "object") {
+            return;
+        }
+
+        const language = getObjectLanguage(value) || inheritedLanguage;
+        const objectContext = subtitleContext || subtitleContextPattern.test(
+            [value.type, value.kind, value.role, value.label, value.name].filter(Boolean).join(" ")
+        );
+
+        for (const [key, item] of Object.entries(value)) {
+            const keyContext = objectContext || subtitleContextPattern.test(key);
+            if (typeof item === "string" && /url|uri|src|href|file|link/i.test(key)) {
+                if (keyContext && isSubtitleFileUrl(item)) {
+                    addSubtitleCandidate(candidates, item, language, sourceUrl);
+                }
                 continue;
             }
 
-            if (!seen.has(candidate)) {
-                seen.add(candidate);
-                urls.push(candidate);
+            extractSubtitleUrlsFromJson(item, candidates, sourceUrl, language, keyContext);
+        }
+    };
+
+    const extractSubtitleUrlsFromText = (text, sourceUrl, candidates) => {
+        const hlsMediaRegex = /#EXT-X-MEDIA:([^\r\n]+)/gi;
+        for (const match of text.matchAll(hlsMediaRegex)) {
+            const attributes = match[1];
+            if (!/TYPE=SUBTITLES/i.test(attributes)) {
+                continue;
+            }
+
+            const uriMatch = attributes.match(/(?:^|,)URI=(?:"([^"]+)"|([^,]+))/i);
+            const languageMatch = attributes.match(/(?:^|,)LANGUAGE=(?:"([^"]+)"|([^,]+))/i);
+            if (uriMatch) {
+                try {
+                    addSubtitleCandidate(candidates, uriMatch[1] || uriMatch[2], languageMatch?.[1] || languageMatch?.[2], sourceUrl);
+                } catch {
+                    // Ignore a malformed playlist URI.
+                }
             }
         }
 
-        return urls;
-    }
+        const dashAdaptationSetRegex = /<AdaptationSet\b([^>]*)>([\s\S]*?)<\/AdaptationSet>/gi;
+        for (const match of text.matchAll(dashAdaptationSetRegex)) {
+            const attributes = match[1];
+            const content = match[2];
+            if (!/contentType=["']text["']|mimeType=["'][^"']*(?:ttml|vtt|subtitle)|codecs=["'][^"']*(?:stpp|wvtt)/i.test(attributes)) {
+                continue;
+            }
+
+            const languageMatch = attributes.match(/\blang=["']([^"']+)["']/i);
+            const baseUrlMatch = content.match(/<BaseURL>([^<]+)<\/BaseURL>/i);
+            if (baseUrlMatch) {
+                try {
+                    addSubtitleCandidate(candidates, baseUrlMatch[1], languageMatch?.[1], sourceUrl);
+                } catch {
+                    // Ignore a malformed MPD BaseURL.
+                }
+            }
+        }
+    };
 
     async function emitSubtitleIfNeeded(url, body) {
-        const candidates = [];
+        const candidates = new Map();
+        let sourceUrl = url;
+        try {
+            sourceUrl = new URL(url, window.location.href).href;
+        } catch {
+            // addSubtitleCandidate will reject unusable URL values below.
+        }
 
-        if (url && isSubtitleCandidate(url)) {
-            candidates.push(url);
+        if (url && isSubtitleFileUrl(url)) {
+            addSubtitleCandidate(candidates, url, null, sourceUrl, true);
         }
 
         if (body) {
-            candidates.push(...extractSubtitleUrlsFromText(body));
+            extractSubtitleUrlsFromText(body, sourceUrl, candidates);
+            try {
+                extractSubtitleUrlsFromJson(JSON.parse(body), candidates, sourceUrl);
+            } catch {
+                // Non-JSON responses are handled by the playlist/text parsers above.
+            }
         }
 
-        const uniqueCandidates = [...new Set(candidates)];
-        for (const candidate of uniqueCandidates) {
-            await emitAndWaitForResponse("SUBTITLE", JSON.stringify({ url: candidate }));
+        for (const candidate of candidates.values()) {
+            await emitAndWaitForResponse("SUBTITLE", JSON.stringify({
+                ...candidate,
+                sourceUrl,
+            }));
         }
     }
 

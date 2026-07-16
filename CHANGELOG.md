@@ -2,6 +2,8 @@
 
 All notable changes to this fork are documented in this file.
 
+This changelog documents changes made by the mp3li fork. For changes prior to the fork point, see the upstream project history.
+
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Every user-visible change to this fork must add an entry under **Unreleased**
@@ -11,17 +13,24 @@ before it is committed.
 
 ### Added
 
-- Capture subtitle candidates observed in page network traffic, including
-  separately requested subtitle URLs and subtitle URLs embedded in text
-  responses.
+- Capture external subtitle files from browser traffic, including direct file
+  requests and subtitle-specific API or manifest data.
 - Preserve captured subtitle request headers with each URL so generated
   follow-up download commands can make the same authenticated request.
 - Generate follow-up `curl` and `ffmpeg` commands for captured subtitles,
   converting temporary VTT downloads to SRT sidecars in the video output
   directory.
+- Infer subtitle language from HLS, DASH, and structured API metadata, with
+  URL-based language detection as a fallback.
+- Name subtitle sidecars by language (`en.srt`, `fr.srt`); use `und.srt` for
+  unknown languages and a numeric suffix for duplicate languages.
+- Remove recognized N_m3u8DL-RE `master-<UUID>_<timestamp>` work directories
+  after the video and every subtitle sidecar complete successfully.
 - Refresh already displayed generated commands when the Additional arguments
   setting changes.
-
+- Print mp3li subtitle-status notes after N_m3u8DL-RE completes, including a
+  terminal spinner while separately captured subtitle files are downloaded,
+  plus a final success message after cleanup.
 - Document macOS Tahoe 26.5.2 with Firefox 152.0.6 as this fork's verified
   macOS development and test environment.
 
@@ -31,6 +40,17 @@ before it is committed.
   generation can handle subtitle URLs found outside the manifest itself.
 - Keep the user's Additional arguments as the authoritative N_m3u8DL-RE
   selection and muxing configuration.
+- Reuse the originating response headers when a subtitle URL is found inside
+  an API response rather than requested directly by the page.
+- Normalize three-letter language codes such as `eng-GB` to standard sidecar
+  tags such as `en-gb`, and inspect additional API language-code and label
+  fields before falling back to the subtitle URL.
+- Run external `ffmpeg` subtitle conversion quietly, retaining error output
+  while removing its banner, stream map, and progress noise after the main
+  downloader reports completion.
+- Prefer a directly observed browser request when VTT and SRT format variants
+  describe the same subtitle asset; download a selected SRT directly and
+  convert other supported subtitle formats to SRT.
 
 ### Fixed
 
@@ -38,6 +58,12 @@ before it is committed.
   edited.
 - Deduplicate externally captured subtitle URLs before follow-up commands are
   generated.
+- Avoid treating a subtitle-list API endpoint as a downloadable subtitle file
+  when the response contains the actual subtitle URLs.
+- Limit generated external downloads to known subtitle-file extensions in
+  direct requests or subtitle-specific API/manifest fields.
+- Prevent stale or duplicate external subtitle links from producing additional
+  sidecars, stalled commands, or inaccurate subtitle counts.
 
 ## [0.9.1] - 2026-07-15
 

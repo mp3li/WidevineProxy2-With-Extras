@@ -7,12 +7,16 @@ Modifies the challenge before it reaches the web player and retrieves the decryp
 This fork retains the upstream GPL-3.0 license and adds a subtitle-aware
 command workflow:
 
-- Detects subtitle URLs observed separately in page network activity, including
-  links present in text responses.
-- Carries the associated request headers into generated follow-up subtitle
-  download commands.
-- Downloads captured subtitle files beside the video output and converts VTT
-  files to SRT with `ffmpeg`.
+- Detects actual external subtitle files from browser requests and
+  subtitle-specific API or manifest data, retaining the request headers needed
+  for short-lived authenticated links.
+- Downloads verified external sidecars beside the video output, converts VTT
+  files to SRT with `ffmpeg`, and uses language-aware names such as
+  `en-us.srt`, `en-gb.srt`, or `und.srt`.
+- Collapses duplicate VTT/SRT representations of the same subtitle asset,
+  preferring the browser-requested file.
+- Shows clear external-subtitle progress and a final success message, and
+  removes recognized N_m3u8DL-RE work folders only after all output succeeds.
 - Keeps the Additional arguments field authoritative, so your N_m3u8DL-RE
   video, audio, subtitle, and muxing selections are preserved in the generated
   command.
