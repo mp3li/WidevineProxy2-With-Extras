@@ -22,6 +22,9 @@ before it is committed.
 - Refresh already displayed generated commands when the Additional arguments
   setting changes.
 
+- Document macOS Tahoe 26.5.2 with Firefox 152.0.6 as this fork's verified
+  macOS development and test environment.
+
 ### Changed
 
 - Include captured subtitle metadata with each selectable manifest so command

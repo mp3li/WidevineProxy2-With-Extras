@@ -35,7 +35,11 @@ This addon requires a Widevine Device file to work, which is not provided by thi
 + Ready-to-use Widevine Devices can be found on the [VideoHelp forum](https://forum.videohelp.com/forums/48).
 
 ## Compatibility
-+ Compatible (tested) browsers: Firefox/Chrome on Windows/Linux.
++ Compatible (tested) browsers: Firefox/Chrome on Windows/Linux, plus Firefox
+  on macOS.
++ Verified macOS development environment: macOS Tahoe 26.5.2 with Firefox
+  152.0.6. Current development and macOS verification for this fork are done
+  on this configuration.
 + Works with any service that accepts challenges from Android devices on the same endpoint.
 
 ## Installation
