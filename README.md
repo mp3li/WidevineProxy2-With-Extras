@@ -44,6 +44,9 @@ This addon requires a Widevine Device file to work, which is not provided by thi
 + Verified macOS development environment: macOS Tahoe 26.5.2 with Firefox
   152.0.6. Current development and macOS verification for this fork are done
   on this configuration.
++ The core extension remains cross-platform. This fork's external-subtitle
+  capture, download, conversion, naming, and cleanup workflow is currently
+  supported on macOS only; it uses zsh, `curl`, `ffmpeg`, and N_m3u8DL-RE.
 + Works with any service that accepts challenges from Android devices on the same endpoint.
 
 ## Installation

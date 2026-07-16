@@ -51,6 +51,8 @@ before it is committed.
 - Prefer a directly observed browser request when VTT and SRT format variants
   describe the same subtitle asset; download a selected SRT directly and
   convert other supported subtitle formats to SRT.
+- Clarify that the core extension remains cross-platform while this fork's
+  external-subtitle workflow is currently supported on macOS only.
 
 ### Fixed
 
