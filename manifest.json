@@ -16,11 +16,17 @@
   "action": {
     "default_popup": "panel/panel.html",
     "default_icon": {
-      "128": "images/icon-128.png"
+      "16": "images/mp3li-media-toolbar-16.png",
+      "32": "images/mp3li-media-toolbar-32.png",
+      "48": "images/mp3li-media-toolbar-48.png",
+      "128": "images/mp3li-media-mark-128.png"
     }
   },
   "icons": {
-    "128": "images/icon-128.png"
+    "16": "images/mp3li-media-mark-16.png",
+    "32": "images/mp3li-media-mark-32.png",
+    "48": "images/mp3li-media-mark-48.png",
+    "128": "images/mp3li-media-mark-128.png"
   },
   "background": {
     "scripts": ["background.js"],

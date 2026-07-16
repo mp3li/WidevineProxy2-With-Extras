@@ -33,6 +33,20 @@ before it is committed.
   plus a final success message after cleanup.
 - Document macOS Tahoe 26.5.2 with Firefox 152.0.6 as this fork's verified
   macOS development and test environment.
+- Add an opt-in macOS/zsh handoff to the separately installed Live Performance
+  Metadata and Extras Getter (LPMAEG), with local-only setup storage, a required
+  public detail-page link, and safe existing-output skipping.
+- Add a compact LPMAEG setup card directly below Command options, along with a
+  modern light/dark popup layout and a new unified media/metadata toolbar and
+  popup icon set.
+- Add locally remembered Hide/Show controls for popup settings, device, command,
+  and LPMAEG cards, reducing scrolling without changing captured-key behavior.
+- Rename captured subtitle sidecars to Jellyfin's video-stem-plus-language
+  convention (for example, `Once.en_us.srt`) and preserve that association when
+  the optional LPMAEG handoff renames a generic downloader video.
+- Auto-use a captured BroadwayHD detail-page URL for the LPMAEG handoff when it
+  matches `broadwayhd.com/video/<id>`, while retaining manual links for every
+  other provider.
 
 ### Changed
 
@@ -53,6 +67,11 @@ before it is committed.
   convert other supported subtitle formats to SRT.
 - Clarify that the core extension remains cross-platform while this fork's
   external-subtitle workflow is currently supported on macOS only.
+- Keep LPMAEG entirely standalone by making its integration an explicit,
+  post-success generated-command handoff only.
+- Clarify generated macOS command progress with subtitle completion and
+  metadata/extras start messages, and use the same mp3li note prefix for the
+  handoff result.
 
 ### Fixed
 
@@ -66,6 +85,12 @@ before it is committed.
   direct requests or subtitle-specific API/manifest fields.
 - Prevent stale or duplicate external subtitle links from producing additional
   sidecars, stalled commands, or inaccurate subtitle counts.
+- Prevent LPMAEG local configuration or removed log entries from being treated
+  as newly captured key records in the popup.
+- Restore the captured-key collapsed view so it shows only the URL until its
+  `+` control is opened, without malformed partial input rows.
+- Align expanded captured-key labels and their inputs/selects into consistent
+  two-column rows for clearer scanning and copying.
 
 ## [0.9.1] - 2026-07-15
 

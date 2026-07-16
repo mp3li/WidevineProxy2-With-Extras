@@ -11,8 +11,8 @@ command workflow:
   subtitle-specific API or manifest data, retaining the request headers needed
   for short-lived authenticated links.
 - Downloads verified external sidecars beside the video output, converts VTT
-  files to SRT with `ffmpeg`, and uses language-aware names such as
-  `en-us.srt`, `en-gb.srt`, or `und.srt`.
+  files to SRT with `ffmpeg`, and uses Jellyfin-ready video-stem-plus-language
+  names such as `Once.en_us.srt`, `Once.en_gb.srt`, or `Once.und.srt`.
 - Collapses duplicate VTT/SRT representations of the same subtitle asset,
   preferring the browser-requested file.
 - Shows clear external-subtitle progress and a final success message, and
@@ -21,6 +21,12 @@ command workflow:
   video, audio, subtitle, and muxing selections are preserved in the generated
   command.
 - Refreshes existing displayed commands when Additional arguments change.
+- Offers an optional macOS-only handoff to the separately installed Live
+  Performance Metadata and Extras Getter (LPMAEG), using a user-supplied public
+  detail-page link after a completed download.
+- Automatically supplies the captured original BroadwayHD detail-page URL to an
+  enabled LPMAEG handoff when it matches `broadwayhd.com/video/<id>`; other
+  providers continue to use the manual public detail-page link field.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete, maintained record of fork
 changes. New behavior is added here only after it has been verified.
@@ -47,6 +53,9 @@ This addon requires a Widevine Device file to work, which is not provided by thi
 + The core extension remains cross-platform. This fork's external-subtitle
   capture, download, conversion, naming, and cleanup workflow is currently
   supported on macOS only; it uses zsh, `curl`, `ffmpeg`, and N_m3u8DL-RE.
++ The optional LPMAEG handoff is also macOS-only at this time. It invokes the
+  separately installed LPMAEG launcher through `python3` after successful output
+  cleanup.
 + Works with any service that accepts challenges from Android devices on the same endpoint.
 
 ## Installation
@@ -93,6 +102,34 @@ Keys are saved:
 > The video will not play when the interception is active, as the Widevine CDM library isn't able to decrypt the Android CDM license.
 
 + Click the `+` button to expand the section to reveal the PSSH and keys.
+
+### Optional LPMAEG handoff (macOS only)
+
+LPMAEG remains a separate, standalone application. If you have it installed,
+the extension can optionally run its non-interactive handoff after the
+N_m3u8DL-RE download, separately captured subtitles, and successful work-folder
+cleanup have all completed.
+
+In **Command options**, enable **Use Live Performance Metadata and Extras
+Getter**, then provide:
+
+- the public detail-page link that LPMAEG supports — not this extension's stream
+  or manifest URL; and
+- LPMAEG's absolute project-folder path.
+
+The extension appends the handoff to the generated macOS/zsh command only when
+both values are valid. LPMAEG receives the final output folder, requires exactly
+one video there, retains its own settings for NFO/artwork/trailer/extra downloads,
+and safely skips existing matching metadata or artwork without overwriting it.
+If the toggle is off, the generated command is unchanged and either tool can be
+used independently.
+
+For a BroadwayHD page whose original URL matches
+`https://broadwayhd.com/video/<id>`, leave the public detail-page link blank.
+The extension recognises that provider-specific page structure and supplies its
+captured original page URL automatically. The popup confirms this with
+**BroadwayHD detail link auto added**; a manually entered link always takes
+priority.
 
 ## FAQ
 > What if I'm unable to get the keys?

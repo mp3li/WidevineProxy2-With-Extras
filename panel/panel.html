@@ -1,76 +1,142 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title></title>
+    <title>WidevineProxy2</title>
     <script type="module" src="panel.js" defer></script>
     <link rel="stylesheet" href="panel.css">
 </head>
-<body style="min-width: 200px;">
-    <div class="header">
-        <img src="../images/icon-128.png" alt="WidevineProxy Icon" width="64"/>
-        <img id="textImage" src="../images/proxy_text.png" alt="ProxyText" width="200"/>
-    </div>
-    <fieldset>
-        <legend>Settings</legend>
-        <div id="settings">
-            <!-- Enabled -->
+<body>
+    <header class="header">
+        <div class="brand">
+            <img src="../images/mp3li-media-mark-128.png" alt="WidevineProxy2 media workflow" width="52" height="52"/>
             <div>
-                <input type="checkbox" id="enabled">
-                <label for="enabled"> Enabled</label>
-            </div>
-            <!-- Dark mode -->
-            <div>
-                <label class="switch">
-                    <input type="checkbox" id="darkModeToggle">
-                    <span class="slider"></span>
-                </label>
-                <label for="enabled"> Dark mode</label>
-            </div>
-            <!-- Type select -->
-            <div id="type-select">
-                <a>Device Type:</a><br>
-                <input type="radio" id="wvd_select" name="cdm_type" value="wvd">
-                <label for="wvd_select">Widevine Device</label><br>
-                <input type="radio" id="remote_select" name="cdm_type" value="remote">
-                <label for="remote_select">Remote CDM</label><br>
+                <h1>WidevineProxy2</h1>
+                <p>with extras</p>
             </div>
         </div>
-        <fieldset id="wvd">
-            <legend>Widevine Device</legend>
-            <button type="button" id="fileInput">Choose File</button>
-            <button type="button" id="remove">Remove</button>
-            <button type="button" id="download">Download</button><br>
-            <label>
+        <label class="theme-control" for="darkModeToggle">
+            <span>Dark</span>
+            <span class="switch">
+                <input type="checkbox" id="darkModeToggle">
+                <span class="slider"></span>
+            </span>
+        </label>
+    </header>
+
+    <main>
+        <section class="card settings-card" data-collapsible-section="settings">
+            <div class="card-heading">
+                <div>
+                    <p class="eyebrow">Session</p>
+                    <h2>Extension settings</h2>
+                </div>
+                <div class="heading-actions">
+                    <label class="check-control" for="enabled">
+                        <input type="checkbox" id="enabled">
+                        <span>Enabled</span>
+                    </label>
+                    <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+                </div>
+            </div>
+            <div class="card-content">
+                <div class="device-type" id="type-select">
+                    <span class="field-label">Device type</span>
+                    <label><input type="radio" id="wvd_select" name="cdm_type" value="wvd"> Widevine Device</label>
+                    <label><input type="radio" id="remote_select" name="cdm_type" value="remote"> Remote CDM</label>
+                </div>
+            </div>
+        </section>
+
+        <section class="card device-card" id="wvd" data-collapsible-section="widevine-device">
+            <div class="card-heading">
+                <div><p class="eyebrow">Device</p><h2>Widevine Device</h2></div>
+                <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+            </div>
+            <div class="card-content">
+                <div class="button-row">
+                    <button type="button" id="fileInput">Choose File</button>
+                    <button type="button" id="remove" class="secondary">Remove</button>
+                    <button type="button" id="download" class="secondary">Download</button>
+                </div>
+                <label class="field-label" for="wvd-combobox">Saved device</label>
                 <select id="wvd-combobox"></select>
-            </label>
-        </fieldset>
-        <fieldset id="remote">
-            <legend>Remote CDM</legend>
-            <button type="button" id="remoteInput">Choose remote.json</button>
-            <button type="button" id="remoteRemove">Remove</button>
-            <button type="button" id="remoteDownload">Download</button><br>
-            <label>
+            </div>
+        </section>
+
+        <section class="card device-card" id="remote" data-collapsible-section="remote-cdm">
+            <div class="card-heading">
+                <div><p class="eyebrow">Device</p><h2>Remote CDM</h2></div>
+                <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+            </div>
+            <div class="card-content">
+                <div class="button-row">
+                    <button type="button" id="remoteInput">Choose remote.json</button>
+                    <button type="button" id="remoteRemove" class="secondary">Remove</button>
+                    <button type="button" id="remoteDownload" class="secondary">Download</button>
+                </div>
+                <label class="field-label" for="remote-combobox">Saved remote CDM</label>
                 <select id="remote-combobox"></select>
-            </label>
-        </fieldset>
-        <fieldset id="command-options">
-            <legend>Command options</legend>
-            <input type="checkbox" id="use-shaka">
-            <label for="use-shaka"> Use Shaka Packager</label><br>
-            <input type="checkbox" id="use-single-quotes">
-            <label for="use-single-quotes"> Use single quotes (preferred for bash)</label><br>
-            <label for="downloader-name">Executable name: </label>
-            <input type="text" class="text-box" id="downloader-name"><br>
-            <label for="downloader-args">Additional arguments: </label>
-            <input type="text" class="text-box" id="downloader-args">
-        </fieldset>
-        <button type="button" id="exportLogs">Export Logs</button>
-        <button type="button" id="clearLogs">Clear Logs</button>
-    </fieldset>
-    <fieldset>
-        <legend>Keys</legend>
-        <button type="button" id="clear">Clear</button>
-        <div id="key-container"></div>
-    </fieldset>
+            </div>
+        </section>
+
+        <section class="card" id="command-options" data-collapsible-section="command-options">
+            <div class="card-heading">
+                <div><p class="eyebrow">Downloader</p><h2>Command options</h2></div>
+                <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+            </div>
+            <div class="card-content">
+                <label class="check-control"><input type="checkbox" id="use-shaka"> <span>Use Shaka Packager</span></label>
+                <label class="check-control"><input type="checkbox" id="use-single-quotes"> <span>Use single quotes</span></label>
+                <label class="field-label" for="downloader-name">Executable name</label>
+                <input type="text" id="downloader-name">
+                <label class="field-label" for="downloader-args">Additional arguments</label>
+                <input type="text" id="downloader-args">
+            </div>
+        </section>
+
+        <section class="card handoff-card" aria-labelledby="lpmaeg-heading" data-collapsible-section="lpmaeg">
+            <div class="card-heading">
+                <div>
+                    <p class="eyebrow">Optional handoff</p>
+                    <h2 id="lpmaeg-heading">Live Performance Metadata and Extras Getter</h2>
+                </div>
+                <div class="heading-actions">
+                    <label class="check-control" for="lpmaeg-enabled">
+                        <input type="checkbox" id="lpmaeg-enabled">
+                        <span>Use</span>
+                    </label>
+                    <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
+                </div>
+            </div>
+            <div class="card-content">
+                <p class="card-description">Uses a public detail-page link after this command completes. See repo <a href="https://github.com/mp3li/Live-Performance-Metadata-and-Extras-Getter" target="_blank" rel="noreferrer">here</a>.</p>
+                <label class="field-label" for="lpmaeg-detail-link">Public detail-page link</label>
+                <div class="input-action-row">
+                    <input type="url" id="lpmaeg-detail-link" placeholder="https://example.com/detail-page">
+                    <button type="button" id="lpmaeg-clear-link" class="secondary">Clear link</button>
+                </div>
+                <label class="field-label" for="lpmaeg-project-folder">Getter Tool Folder</label>
+                <div class="input-action-row">
+                    <input type="text" id="lpmaeg-project-folder" placeholder="/Users/you/Live-Performance-Metadata-and-Extras-Getter">
+                    <button type="button" id="lpmaeg-clear-setup" class="secondary">Clear setup</button>
+                </div>
+                <p id="lpmaeg-status" class="handoff-status" role="status"></p>
+            </div>
+        </section>
+
+        <div class="button-row utility-actions">
+            <button type="button" id="exportLogs" class="secondary">Export Logs</button>
+            <button type="button" id="clearLogs" class="secondary">Clear Logs</button>
+        </div>
+
+        <section class="card keys-card">
+            <div class="card-heading">
+                <div><p class="eyebrow">Captured</p><h2>Keys</h2></div>
+                <button type="button" id="clear" class="secondary">Clear</button>
+            </div>
+            <div class="card-content"><div id="key-container"></div></div>
+        </section>
+    </main>
+    <footer class="fork-credit"><a href="https://github.com/mp3li/WidevineProxy2-With-Extras" target="_blank" rel="noreferrer">Fork by mp3li</a><span> - </span><a href="https://github.com/DevLARLEY/WidevineProxy2" target="_blank" rel="noreferrer">Forked from DevLARLEY</a></footer>
 </body>
 </html>

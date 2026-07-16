@@ -30,13 +30,16 @@ remote_select.addEventListener('change', async function (){
 
 const export_button = document.getElementById('exportLogs');
 export_button.addEventListener('click', async function() {
-    const logs = await AsyncLocalStorage.getStorage(null);
+    const allStored = await AsyncLocalStorage.getStorage(null);
+    const logs = Object.fromEntries(Object.entries(allStored).filter(
+        ([, value]) => value && typeof value === 'object' && (value.type === 'WIDEVINE' || value.type === 'CLEARKEY')
+    ));
     SettingsManager.downloadFile(new Blob([JSON.stringify(logs)], { type: "application/json;charset=utf-8" }), "logs.json");
 });
 
 const clear_logs = document.getElementById('clearLogs');
-clear_logs.addEventListener('click', function() {
-    AsyncLocalStorage.clearStorage();
+clear_logs.addEventListener('click', async function() {
+    await SettingsManager.clearStoredLogs();
 });
 // ======================================
 
@@ -140,6 +143,143 @@ downloader_args.addEventListener('input', async function (){
 });
 // =================================================
 
+// ================ LPMAEG Handoff ================
+const lpmaeg_enabled = document.getElementById('lpmaeg-enabled');
+const lpmaeg_detail_link = document.getElementById('lpmaeg-detail-link');
+const lpmaeg_project_folder = document.getElementById('lpmaeg-project-folder');
+const lpmaeg_status = document.getElementById('lpmaeg-status');
+
+function getBroadwayHDDetailLink(pageUrl) {
+    try {
+        const parsed = new URL(pageUrl);
+        const host = parsed.hostname.toLowerCase();
+        if (
+            (host === 'broadwayhd.com' || host === 'www.broadwayhd.com')
+            && /^\/video\/\d+\/?$/.test(parsed.pathname)
+        ) {
+            return parsed.href;
+        }
+    } catch {
+        // A non-page URL cannot be used as a BroadwayHD detail link.
+    }
+    return '';
+}
+
+function resolveLPMAEGDetailLink(config, pageUrl = '') {
+    return config.detailLink || getBroadwayHDDetailLink(pageUrl);
+}
+
+function getLPMAEGValidationMessage(config, pageUrl = '') {
+    if (!config.enabled) {
+        return '';
+    }
+
+    try {
+        const parsed = new URL(resolveLPMAEGDetailLink(config, pageUrl));
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+            return 'Enter a public http(s) detail link.';
+        }
+    } catch {
+        return 'Enter a public http(s) detail link.';
+    }
+
+    if (!config.projectFolder.startsWith('/')) {
+        return 'Enter LPMAEG’s absolute project-folder path.';
+    }
+
+    return '';
+}
+
+async function getActivePageUrl() {
+    try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        return tabs[0]?.url || '';
+    } catch {
+        return '';
+    }
+}
+
+function currentLPMAEGConfig() {
+    return {
+        enabled: lpmaeg_enabled.checked,
+        detailLink: lpmaeg_detail_link.value.trim(),
+        projectFolder: lpmaeg_project_folder.value.trim(),
+    };
+}
+
+async function refreshLPMAEGStatus() {
+    const config = currentLPMAEGConfig();
+    const activePageUrl = await getActivePageUrl();
+    const autoDetailLink = !config.detailLink && getBroadwayHDDetailLink(activePageUrl);
+    const validationMessage = getLPMAEGValidationMessage(config, activePageUrl);
+    lpmaeg_status.className = 'handoff-status';
+    lpmaeg_detail_link.placeholder = autoDetailLink
+        ? 'BroadwayHD detail link auto added'
+        : 'https://example.com/detail-page';
+
+    if (!config.enabled) {
+        lpmaeg_status.textContent = 'Off';
+        return;
+    }
+    if (validationMessage) {
+        lpmaeg_status.classList.add('is-warning');
+        lpmaeg_status.textContent = validationMessage;
+        return;
+    }
+
+    lpmaeg_status.classList.add('is-ready');
+    lpmaeg_status.textContent = autoDetailLink
+        ? 'BroadwayHD detail link auto added'
+        : 'Ready — runs after the completed download, subtitles, and cleanup.';
+}
+
+async function saveLPMAEGConfigAndRefresh() {
+    await SettingsManager.saveLPMAEGConfig(currentLPMAEGConfig());
+    await refreshLPMAEGStatus();
+    await refreshGeneratedCommands();
+}
+
+lpmaeg_enabled.addEventListener('change', saveLPMAEGConfigAndRefresh);
+lpmaeg_detail_link.addEventListener('input', saveLPMAEGConfigAndRefresh);
+lpmaeg_project_folder.addEventListener('input', saveLPMAEGConfigAndRefresh);
+document.getElementById('lpmaeg-clear-link').addEventListener('click', async () => {
+    lpmaeg_detail_link.value = '';
+    await saveLPMAEGConfigAndRefresh();
+});
+document.getElementById('lpmaeg-clear-setup').addEventListener('click', async () => {
+    lpmaeg_project_folder.value = '';
+    await saveLPMAEGConfigAndRefresh();
+});
+// =================================================
+
+// ================ Collapsible Sections ================
+function setCollapsibleSectionState(card, collapsed) {
+    const button = card.querySelector('.collapse-toggle');
+    const sectionTitle = card.querySelector('h2').textContent;
+    card.classList.toggle('is-collapsed', collapsed);
+    button.textContent = collapsed ? 'Show' : 'Hide';
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.setAttribute('aria-label', `${collapsed ? 'Show' : 'Hide'} ${sectionTitle}`);
+}
+
+async function initializeCollapsibleSections() {
+    const savedState = await SettingsManager.getPanelSectionState();
+    for (const card of document.querySelectorAll('[data-collapsible-section]')) {
+        const sectionName = card.dataset.collapsibleSection;
+        setCollapsibleSectionState(card, savedState[sectionName] === true);
+        card.querySelector('.collapse-toggle').addEventListener('click', async () => {
+            const collapsed = !card.classList.contains('is-collapsed');
+            setCollapsibleSectionState(card, collapsed);
+            const currentState = await SettingsManager.getPanelSectionState();
+            await SettingsManager.savePanelSectionState({
+                ...currentState,
+                [sectionName]: collapsed,
+            });
+        });
+    }
+}
+// =======================================================
+
 // ================ Keys ================
 const clear = document.getElementById('clear');
 clear.addEventListener('click', async function() {
@@ -235,7 +375,7 @@ function createSubtitleSpinnerFunction() {
         'printf "\\rmp3li note: %s %s" "$message" "$frame";',
         'frame_index=$((frame_index + 1)); sleep 0.1;',
         'done;',
-        'printf "\\r\\033[K\\n\\n";',
+        'printf "\\r\\033[K";',
         '}',
     ].join(' ');
 }
@@ -281,18 +421,27 @@ function getUniqueSubtitleFiles(subtitles) {
     return [...selected.values()];
 }
 
-function createExternalSubtitleCommands(subtitles, outputDirectory, quoteChar, safeQuoteChar) {
+function getSubtitleSidecarNames(subtitles) {
     const uniqueSubtitles = getUniqueSubtitleFiles(subtitles);
-
     const languageOccurrences = new Map();
-    return uniqueSubtitles.map((subtitle, index) => {
+    return uniqueSubtitles.map((subtitle) => {
         const language = getSubtitleLanguage(subtitle);
+        const jellyfinLanguage = language.replaceAll('-', '_');
         const occurrence = (languageOccurrences.get(language) || 0) + 1;
         languageOccurrences.set(language, occurrence);
 
-        const subtitleName = occurrence === 1
-            ? `${language}.srt`
-            : `${language}-${String(occurrence).padStart(2, '0')}.srt`;
+        return occurrence === 1
+            ? `${jellyfinLanguage}.srt`
+            : `${jellyfinLanguage}.${String(occurrence).padStart(2, '0')}.srt`;
+    });
+}
+
+function createExternalSubtitleCommands(subtitles, outputDirectory, quoteChar, safeQuoteChar) {
+    const uniqueSubtitles = getUniqueSubtitleFiles(subtitles);
+    const subtitleNames = getSubtitleSidecarNames(subtitles);
+
+    return uniqueSubtitles.map((subtitle, index) => {
+        const subtitleName = subtitleNames[index];
         const temporaryFile = joinOutputPath(outputDirectory, `.${subtitleName}.vtt`);
         const outputFile = joinOutputPath(outputDirectory, subtitleName);
         const headers = formatHeaders(subtitle.headers, '-H', quoteChar, safeQuoteChar);
@@ -337,6 +486,38 @@ function createSubtitleStatusCommand(subtitleCount, quoteChar) {
     return `printf '\\n%s\\n\\n%s\\n\\n' ${quoteChar}${scopeNote}${quoteChar} ${quoteChar}${resultNote}${quoteChar}`;
 }
 
+function createSubtitleCompletionCommand(subtitleCount, quoteChar) {
+    if (subtitleCount === 0) {
+        return '';
+    }
+    return `printf '%s\\n\\n' ${quoteChar}mp3li note: subtitle(s) completed downloading.${quoteChar}`;
+}
+
+function createSubtitleSidecarNamingCommand(subtitleNames, outputDirectory, quoteChar) {
+    if (subtitleNames.length === 0) {
+        return '';
+    }
+
+    const serializedNames = subtitleNames.map((name) => `${quoteChar}${name}${quoteChar}`).join(' ');
+    return [
+        '() {',
+        'emulate -L zsh;',
+        `local mp3li_output_dir=${quoteChar}${outputDirectory}${quoteChar};`,
+        'local -a mp3li_video_files mp3li_subtitle_names;',
+        'mp3li_video_files=("${(@f)$(find "$mp3li_output_dir" -maxdepth 1 -type f \\( -iname "*.3gp" -o -iname "*.avi" -o -iname "*.flv" -o -iname "*.m2ts" -o -iname "*.m4v" -o -iname "*.mkv" -o -iname "*.mov" -o -iname "*.mp4" -o -iname "*.mpeg" -o -iname "*.mpg" -o -iname "*.mts" -o -iname "*.ts" -o -iname "*.webm" -o -iname "*.wmv" \\) -print)}");',
+        '(( ${#mp3li_video_files[@]} == 1 )) || return 0;',
+        `mp3li_subtitle_names=(${serializedNames});`,
+        'local mp3li_video_stem="${mp3li_video_files[1]%.*}" mp3li_subtitle_name mp3li_subtitle mp3li_target;',
+        'for mp3li_subtitle_name in "${mp3li_subtitle_names[@]}"; do',
+        'mp3li_subtitle="${mp3li_output_dir}/${mp3li_subtitle_name}";',
+        '[[ -f "$mp3li_subtitle" ]] || continue;',
+        'mp3li_target="${mp3li_video_stem}.${mp3li_subtitle_name}";',
+        '[[ -e "$mp3li_target" ]] || mv "$mp3li_subtitle" "$mp3li_target";',
+        'done;',
+        '}',
+    ].join(' ');
+}
+
 function createWorkDirectoryCleanupCommand(outputDirectory, quoteChar) {
     const workDirectoryPattern = 'master-????????-????-????-????-????????????_????-??-??_??-??-??';
     return [
@@ -352,6 +533,28 @@ function createCompletionCommand(quoteChar) {
     return `printf '\\n%s\\n' ${quoteChar}mp3li note: Complete. Output is ready.${quoteChar}`;
 }
 
+function createLPMAEGStartCommand(config, quoteChar) {
+    return config.enabled
+        ? `printf '%s\\n\\n' ${quoteChar}mp3li note: Downloading your metadata and extras...${quoteChar}`
+        : '';
+}
+
+function shellQuote(value) {
+    return `'${String(value).replaceAll("'", "'\\\"'\\\"'")}'`;
+}
+
+function createLPMAEGHandoffCommand(config, outputDirectory) {
+    const launcherPath = `${config.projectFolder.replace(/[\\/]+$/, '')}/Launchers/live_performance_metadata_and_extras_getter.py`;
+    return [
+        'python3',
+        shellQuote(launcherPath),
+        '--handoff',
+        '--detail-link', shellQuote(config.detailLink),
+        '--media-folder', shellQuote(outputDirectory),
+        '--skip-existing',
+    ].join(' ');
+}
+
 async function createCommand(json, key_string) {
     const metadata = JSON.parse(json);
 
@@ -365,6 +568,12 @@ async function createCommand(json, key_string) {
     const executableName = await SettingsManager.getExecutableName();
     const useShaka = await SettingsManager.getUseShakaPackager();
     const additionalArgs = await SettingsManager.getAdditionalArguments();
+    const lpmaegConfig = await SettingsManager.getLPMAEGConfig();
+    const lpmaegDetailLink = resolveLPMAEGDetailLink(lpmaegConfig, metadata.pageUrl);
+    const lpmaegValidationMessage = getLPMAEGValidationMessage(lpmaegConfig, metadata.pageUrl);
+    if (lpmaegValidationMessage) {
+        return `LPMAEG setup incomplete: ${lpmaegValidationMessage}`;
+    }
     // Keep the user's downloader arguments as the source of truth. In
     // particular, do not add or rewrite subtitle selectors here.
     const commandParts = [
@@ -384,9 +593,17 @@ async function createCommand(json, key_string) {
         safeQuoteChar
     );
     const subtitleCount = subtitleCommands.length;
+    const subtitleNames = getSubtitleSidecarNames(metadata.subtitles);
     const subtitleStatusCommand = createSubtitleStatusCommand(subtitleCount, quoteChar);
     const subtitleSpinnerFunction = subtitleCommands.length > 0 ? createSubtitleSpinnerFunction() : '';
-    const cleanupCommand = createWorkDirectoryCleanupCommand(getOutputDirectory(additionalArgs), quoteChar);
+    const subtitleCompletionCommand = createSubtitleCompletionCommand(subtitleCount, quoteChar);
+    const outputDirectory = getOutputDirectory(additionalArgs);
+    const subtitleSidecarNamingCommand = createSubtitleSidecarNamingCommand(subtitleNames, outputDirectory, quoteChar);
+    const cleanupCommand = createWorkDirectoryCleanupCommand(outputDirectory, quoteChar);
+    const lpmaegStartCommand = createLPMAEGStartCommand(lpmaegConfig, quoteChar);
+    const lpmaegHandoffCommand = lpmaegConfig.enabled
+        ? createLPMAEGHandoffCommand({ ...lpmaegConfig, detailLink: lpmaegDetailLink }, outputDirectory)
+        : '';
     const completionCommand = createCompletionCommand(quoteChar);
 
     return [
@@ -394,7 +611,11 @@ async function createCommand(json, key_string) {
         subtitleStatusCommand,
         subtitleSpinnerFunction,
         ...subtitleCommands,
+        subtitleCompletionCommand,
+        subtitleSidecarNamingCommand,
         cleanupCommand,
+        lpmaegStartCommand,
+        lpmaegHandoffCommand,
         completionCommand,
     ].filter(Boolean).join(' && ');
 }
@@ -421,29 +642,28 @@ async function appendLog(result) {
     logContainer.innerHTML = `
         <button class="toggleButton">+</button>
         <div class="expandableDiv collapsed">
-            <label class="always-visible right-bound">
-                URL:<input type="text" class="text-box" value="${result.url}">
-            </label>
-            <label class="expanded-only right-bound">
-            <label class="expanded-only right-bound">
-                PSSH:<input type="text" class="text-box" value="${result.pssh_data}">
-            </label>
-            <label class="expanded-only right-bound key-copy">
-                <a href="#" title="Click to copy">Keys:</a><input type="text" class="text-box" value="${key_string}">
-            </label>
-            <label class="expanded-only right-bound">
-                Date:<input type="text" class="text-box" value="${date_string}">
-            </label>
-            ${result.manifests.length > 0 ? `<label class="expanded-only right-bound manifest-copy">
-                <a href="#" title="Click to copy">Manifest:</a><select id="manifest" class="text-box"></select>
-            </label>
-            <label class="expanded-only right-bound command-copy">
-                <a href="#" title="Click to copy">Cmd:</a><input type="text" id="command" class="text-box">
-            </label>` : ''}
+            <div class="always-visible key-detail-row">
+                <span class="key-detail-label">URL</span><input type="text" class="text-box" value="${result.url}">
+            </div>
+            <div class="expanded-only key-detail-row" hidden>
+                <span class="key-detail-label">PSSH</span><input type="text" class="text-box" value="${result.pssh_data}">
+            </div>
+            <div class="expanded-only key-detail-row key-copy" hidden>
+                <span class="key-detail-label">Keys</span><input type="text" class="text-box" value="${key_string}">
+            </div>
+            <div class="expanded-only key-detail-row" hidden>
+                <span class="key-detail-label">Date</span><input type="text" class="text-box" value="${date_string}">
+            </div>
+            ${result.manifests.length > 0 ? `<div class="expanded-only key-detail-row manifest-copy" hidden>
+                <span class="key-detail-label">Manifest</span><select id="manifest" class="text-box"></select>
+            </div>
+            <div class="expanded-only key-detail-row command-copy" hidden>
+                <a href="#" title="Click to copy">Command</a><input type="text" id="command" class="text-box">
+            </div>` : ''}
         </div>`;
 
-    const keysInput = logContainer.querySelector('.key-copy');
-    keysInput.addEventListener('click', () => {
+    const keyCopy = logContainer.querySelector('.key-copy');
+    keyCopy.addEventListener('click', () => {
         navigator.clipboard.writeText(key_string);
     });
 
@@ -457,7 +677,7 @@ async function appendLog(result) {
         result.manifests.forEach((manifest) => {
             const option = new Option(
                 `[${manifest.type}] ${manifest.url}`,
-                JSON.stringify({ ...manifest, subtitles: result.subtitles || [] })
+                JSON.stringify({ ...manifest, subtitles: result.subtitles || [], pageUrl: result.url })
             );
             select.add(option);
         });
@@ -475,16 +695,19 @@ async function appendLog(result) {
     }
 
     const toggleButtons = logContainer.querySelector('.toggleButton');
+    const expandedRows = logContainer.querySelectorAll('.expanded-only');
     toggleButtons.addEventListener('click', function () {
         const expandableDiv = this.nextElementSibling;
         if (expandableDiv.classList.contains('collapsed')) {
             toggleButtons.innerHTML = "-";
             expandableDiv.classList.remove('collapsed');
             expandableDiv.classList.add('expanded');
+            expandedRows.forEach((row) => { row.hidden = false; });
         } else {
             toggleButtons.innerHTML = "+";
             expandableDiv.classList.remove('expanded');
             expandableDiv.classList.add('collapsed');
+            expandedRows.forEach((row) => { row.hidden = true; });
         }
     });
 
@@ -494,7 +717,10 @@ async function appendLog(result) {
 chrome.storage.onChanged.addListener(async (changes, areaName) => {
     if (areaName === 'local') {
         for (const [key, values] of Object.entries(changes)) {
-            await appendLog(values.newValue);
+            const log = values.newValue;
+            if (log && (log.type === 'WIDEVINE' || log.type === 'CLEARKEY')) {
+                await appendLog(log);
+            }
         }
     }
 });
@@ -510,12 +736,18 @@ function checkLogs() {
 }
 
 document.addEventListener('DOMContentLoaded', async function () {
+    await initializeCollapsibleSections();
     enabled.checked = await SettingsManager.getEnabled();
     SettingsManager.setDarkMode(await SettingsManager.getDarkMode());
     use_shaka.checked = await SettingsManager.getUseShakaPackager();
     use_single_quotes.checked = await SettingsManager.getUseSingleQuotes();
     downloader_name.value = await SettingsManager.getExecutableName();
     downloader_args.value = await SettingsManager.getAdditionalArguments();
+    const lpmaegConfig = await SettingsManager.getLPMAEGConfig();
+    lpmaeg_enabled.checked = lpmaegConfig.enabled;
+    lpmaeg_detail_link.value = lpmaegConfig.detailLink;
+    lpmaeg_project_folder.value = lpmaegConfig.projectFolder;
+    await refreshLPMAEGStatus();
     SettingsManager.setSelectedDeviceType(await SettingsManager.getSelectedDeviceType());
     await DeviceManager.loadSetAllWidevineDevices();
     await DeviceManager.selectWidevineDevice(await DeviceManager.getSelectedWidevineDevice());
