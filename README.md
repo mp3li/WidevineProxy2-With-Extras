@@ -33,9 +33,9 @@ command workflow:
   video, audio, subtitle, and muxing selections are preserved in the generated
   command.
 - Refreshes existing displayed commands when Additional arguments change.
-- Offers an optional macOS-only handoff to the separately installed Live
-  Performance Metadata and Extras Getter (LPMAEG), using a user-supplied public
-  detail-page link after a completed download.
+- Offers one optional macOS-only metadata/extras handoff, where you choose either
+  the general Media Metadata and Extras Getter (MME) or the provider-focused
+  Live Performance Metadata and Extras Getter (LPMAEG).
 - Automatically supplies the captured original BroadwayHD detail-page URL to an
   enabled LPMAEG handoff when it matches `broadwayhd.com/video/<id>`; other
   providers continue to use the manual public detail-page link field.
@@ -122,31 +122,24 @@ Captured media and protected-stream key records are saved:
 + Click the `+` button to expand a captured item. Protected media reveals the
   PSSH and keys; public media reveals its manifest and a no-key command.
 
-### Optional LPMAEG handoff (macOS only)
+### Optional Metadata and Extras Getter handoff (macOS only)
 
-LPMAEG remains a separate, standalone application. If you have it installed,
-the extension can optionally run its non-interactive handoff after the
-N_m3u8DL-RE download, separately captured subtitles, and successful work-folder
-cleanup have all completed.
+In **Metadata and Extras Getter**, select exactly one tool:
 
-In **Command options**, enable **Use Live Performance Metadata and Extras
-Getter**, then provide:
+- **Media Metadata and Extras Getter (MME)** for general media providers; or
+- **Live Performance Metadata and Extras Getter (LPMAEG)** for its supported
+  live-performance providers.
 
-- the public detail-page link that LPMAEG supports — not this extension's stream
-  or manifest URL; and
-- LPMAEG's absolute project-folder path.
-
-The extension appends the handoff to the generated macOS/zsh command only when
-both values are valid. LPMAEG receives the final output folder, requires exactly
-one video there, retains its own settings for NFO/artwork/trailer/extra downloads,
-and safely skips existing matching metadata or artwork without overwriting it.
-If the toggle is off, the generated command is unchanged and either tool can be
-used independently.
+Enable **Use**, then provide that getter's public detail-page link — not this
+extension's stream or manifest URL — and its absolute project-folder path. The
+selected getter runs after the N_m3u8DL-RE download, separately captured
+subtitles, and work-folder cleanup. It receives the final output folder and uses
+`--skip-existing`, so matching metadata or artwork is not overwritten.
 
 For a BroadwayHD page whose original URL matches
 `https://broadwayhd.com/video/<id>`, leave the public detail-page link blank.
-The extension recognises that provider-specific page structure and supplies its
-captured original page URL automatically. The popup confirms this with
+When LPMAEG is selected, the extension recognises that provider-specific page
+structure and supplies its captured original page URL automatically. The popup confirms this with
 **BroadwayHD detail link auto added**; a manually entered link always takes
 priority.
 

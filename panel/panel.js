@@ -143,11 +143,42 @@ downloader_args.addEventListener('input', async function (){
 });
 // =================================================
 
-// ================ LPMAEG Handoff ================
-const lpmaeg_enabled = document.getElementById('lpmaeg-enabled');
-const lpmaeg_detail_link = document.getElementById('lpmaeg-detail-link');
-const lpmaeg_project_folder = document.getElementById('lpmaeg-project-folder');
-const lpmaeg_status = document.getElementById('lpmaeg-status');
+// ================ Metadata Getter Handoff ================
+const metadata_getter_type = document.getElementById('metadata-getter-type');
+const metadata_getter_enabled = document.getElementById('metadata-getter-enabled');
+const metadata_getter_detail_link = document.getElementById('metadata-getter-detail-link');
+const metadata_getter_project_folder = document.getElementById('metadata-getter-project-folder');
+const metadata_getter_status = document.getElementById('metadata-getter-status');
+const metadata_getter_description = document.getElementById('metadata-getter-description');
+
+function getMMEValidationMessage(config) {
+    if (!config.enabled) {
+        return '';
+    }
+
+    try {
+        const parsed = new URL(config.detailLink);
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+            return 'Enter a public http(s) detail link.';
+        }
+    } catch {
+        return 'Enter a public http(s) detail link.';
+    }
+
+    if (!config.projectFolder.startsWith('/')) {
+        return 'Enter MME’s absolute project-folder path.';
+    }
+
+    return '';
+}
+
+function currentMetadataGetterConfig() {
+    return {
+        enabled: metadata_getter_enabled.checked,
+        detailLink: metadata_getter_detail_link.value.trim(),
+        projectFolder: metadata_getter_project_folder.value.trim(),
+    };
+}
 
 function getBroadwayHDDetailLink(pageUrl) {
     try {
@@ -199,58 +230,88 @@ async function getActivePageUrl() {
     }
 }
 
-function currentLPMAEGConfig() {
-    return {
-        enabled: lpmaeg_enabled.checked,
-        detailLink: lpmaeg_detail_link.value.trim(),
-        projectFolder: lpmaeg_project_folder.value.trim(),
-    };
+async function getStoredMetadataGetterConfig(type) {
+    return type === 'mme'
+        ? SettingsManager.getMMEConfig()
+        : SettingsManager.getLPMAEGConfig();
 }
 
-async function refreshLPMAEGStatus() {
-    const config = currentLPMAEGConfig();
-    const activePageUrl = await getActivePageUrl();
-    const autoDetailLink = !config.detailLink && getBroadwayHDDetailLink(activePageUrl);
-    const validationMessage = getLPMAEGValidationMessage(config, activePageUrl);
-    lpmaeg_status.className = 'handoff-status';
-    lpmaeg_detail_link.placeholder = autoDetailLink
+async function saveStoredMetadataGetterConfig(type, config) {
+    if (type === 'mme') {
+        await SettingsManager.saveMMEConfig(config);
+    } else {
+        await SettingsManager.saveLPMAEGConfig(config);
+    }
+}
+
+async function refreshMetadataGetterStatus() {
+    const type = metadata_getter_type.value;
+    const config = currentMetadataGetterConfig();
+    const activePageUrl = type === 'lpmaeg' ? await getActivePageUrl() : '';
+    const autoDetailLink = type === 'lpmaeg' && !config.detailLink && getBroadwayHDDetailLink(activePageUrl);
+    const validationMessage = type === 'mme'
+        ? getMMEValidationMessage(config)
+        : getLPMAEGValidationMessage(config, activePageUrl);
+    const isLivePerformance = type === 'lpmaeg';
+
+    metadata_getter_status.className = 'handoff-status';
+    metadata_getter_description.textContent = isLivePerformance
+        ? 'Uses a public detail-page link after this command completes. BroadwayHD video pages can be added automatically.'
+        : 'Uses a public detail-page link after this command completes.';
+    metadata_getter_detail_link.placeholder = autoDetailLink
         ? 'BroadwayHD detail link auto added'
         : 'https://example.com/detail-page';
+    metadata_getter_project_folder.placeholder = isLivePerformance
+        ? '/Users/you/Live-Performance-Metadata-and-Extras-Getter'
+        : '/Users/you/Media-Metadata-and-Extras-Getter';
 
     if (!config.enabled) {
-        lpmaeg_status.textContent = 'Off';
+        metadata_getter_status.textContent = 'Off';
         return;
     }
     if (validationMessage) {
-        lpmaeg_status.classList.add('is-warning');
-        lpmaeg_status.textContent = validationMessage;
+        metadata_getter_status.classList.add('is-warning');
+        metadata_getter_status.textContent = validationMessage;
         return;
     }
 
-    lpmaeg_status.classList.add('is-ready');
-    lpmaeg_status.textContent = autoDetailLink
+    metadata_getter_status.classList.add('is-ready');
+    metadata_getter_status.textContent = autoDetailLink
         ? 'BroadwayHD detail link auto added'
         : 'Ready — runs after the completed download, subtitles, and cleanup.';
 }
 
-async function saveLPMAEGConfigAndRefresh() {
-    await SettingsManager.saveLPMAEGConfig(currentLPMAEGConfig());
-    await refreshLPMAEGStatus();
+async function loadSelectedMetadataGetterConfig() {
+    const config = await getStoredMetadataGetterConfig(metadata_getter_type.value);
+    metadata_getter_enabled.checked = config.enabled;
+    metadata_getter_detail_link.value = config.detailLink;
+    metadata_getter_project_folder.value = config.projectFolder;
+    await refreshMetadataGetterStatus();
+}
+
+async function saveSelectedMetadataGetterConfigAndRefresh() {
+    await saveStoredMetadataGetterConfig(metadata_getter_type.value, currentMetadataGetterConfig());
+    await refreshMetadataGetterStatus();
     await refreshGeneratedCommands();
 }
 
-lpmaeg_enabled.addEventListener('change', saveLPMAEGConfigAndRefresh);
-lpmaeg_detail_link.addEventListener('input', saveLPMAEGConfigAndRefresh);
-lpmaeg_project_folder.addEventListener('input', saveLPMAEGConfigAndRefresh);
-document.getElementById('lpmaeg-clear-link').addEventListener('click', async () => {
-    lpmaeg_detail_link.value = '';
-    await saveLPMAEGConfigAndRefresh();
+metadata_getter_type.addEventListener('change', async () => {
+    await SettingsManager.saveSelectedMetadataGetter(metadata_getter_type.value);
+    await loadSelectedMetadataGetterConfig();
+    await refreshGeneratedCommands();
 });
-document.getElementById('lpmaeg-clear-setup').addEventListener('click', async () => {
-    lpmaeg_project_folder.value = '';
-    await saveLPMAEGConfigAndRefresh();
+metadata_getter_enabled.addEventListener('change', saveSelectedMetadataGetterConfigAndRefresh);
+metadata_getter_detail_link.addEventListener('input', saveSelectedMetadataGetterConfigAndRefresh);
+metadata_getter_project_folder.addEventListener('input', saveSelectedMetadataGetterConfigAndRefresh);
+document.getElementById('metadata-getter-clear-link').addEventListener('click', async () => {
+    metadata_getter_detail_link.value = '';
+    await saveSelectedMetadataGetterConfigAndRefresh();
 });
-// =================================================
+document.getElementById('metadata-getter-clear-setup').addEventListener('click', async () => {
+    metadata_getter_project_folder.value = '';
+    await saveSelectedMetadataGetterConfigAndRefresh();
+});
+// ========================================================
 
 // ================ Collapsible Sections ================
 function setCollapsibleSectionState(card, collapsed) {
@@ -557,12 +618,30 @@ function createLPMAEGStartCommand(config, quoteChar) {
         : '';
 }
 
+function createMMEStartCommand(config, quoteChar) {
+    return config.enabled
+        ? `printf '%s\\n\\n' ${quoteChar}mp3li note: Downloading your media metadata and extras...${quoteChar}`
+        : '';
+}
+
 function shellQuote(value) {
     return `'${String(value).replaceAll("'", "'\\\"'\\\"'")}'`;
 }
 
 function createLPMAEGHandoffCommand(config, outputDirectory) {
     const launcherPath = `${config.projectFolder.replace(/[\\/]+$/, '')}/Launchers/live_performance_metadata_and_extras_getter.py`;
+    return [
+        'python3',
+        shellQuote(launcherPath),
+        '--handoff',
+        '--detail-link', shellQuote(config.detailLink),
+        '--media-folder', shellQuote(outputDirectory),
+        '--skip-existing',
+    ].join(' ');
+}
+
+function createMMEHandoffCommand(config, outputDirectory) {
+    const launcherPath = `${config.projectFolder.replace(/[\\/]+$/, '')}/Launchers/media_metadata_and_extras_getter.py`;
     return [
         'python3',
         shellQuote(launcherPath),
@@ -589,11 +668,17 @@ async function createCommand(json, key_string = '') {
     const commandArgs = metadata.isHlsPlaylistFallback
         ? removeIncompatibleHlsVideoSelector(additionalArgs)
         : additionalArgs;
-    const lpmaegConfig = await SettingsManager.getLPMAEGConfig();
-    const lpmaegDetailLink = resolveLPMAEGDetailLink(lpmaegConfig, metadata.pageUrl);
-    const lpmaegValidationMessage = getLPMAEGValidationMessage(lpmaegConfig, metadata.pageUrl);
-    if (lpmaegValidationMessage) {
-        return `LPMAEG setup incomplete: ${lpmaegValidationMessage}`;
+    const metadataGetterType = await SettingsManager.getSelectedMetadataGetter();
+    const metadataGetterConfig = await getStoredMetadataGetterConfig(metadataGetterType);
+    const metadataGetterDetailLink = metadataGetterType === 'lpmaeg'
+        ? resolveLPMAEGDetailLink(metadataGetterConfig, metadata.pageUrl)
+        : metadataGetterConfig.detailLink;
+    const metadataGetterValidationMessage = metadataGetterType === 'lpmaeg'
+        ? getLPMAEGValidationMessage(metadataGetterConfig, metadata.pageUrl)
+        : getMMEValidationMessage(metadataGetterConfig);
+    if (metadataGetterValidationMessage) {
+        const getterName = metadataGetterType === 'lpmaeg' ? 'LPMAEG' : 'MME';
+        return `${getterName} setup incomplete: ${metadataGetterValidationMessage}`;
     }
     // Keep the user's downloader arguments as the source of truth. In
     // particular, do not add or rewrite subtitle selectors here.
@@ -621,9 +706,13 @@ async function createCommand(json, key_string = '') {
     const outputDirectory = getOutputDirectory(commandArgs);
     const subtitleSidecarNamingCommand = createSubtitleSidecarNamingCommand(subtitleNames, outputDirectory, quoteChar);
     const cleanupCommand = createWorkDirectoryCleanupCommand(outputDirectory, quoteChar);
-    const lpmaegStartCommand = createLPMAEGStartCommand(lpmaegConfig, quoteChar);
-    const lpmaegHandoffCommand = lpmaegConfig.enabled
-        ? createLPMAEGHandoffCommand({ ...lpmaegConfig, detailLink: lpmaegDetailLink }, outputDirectory)
+    const metadataGetterStartCommand = metadataGetterType === 'lpmaeg'
+        ? createLPMAEGStartCommand(metadataGetterConfig, quoteChar)
+        : createMMEStartCommand(metadataGetterConfig, quoteChar);
+    const metadataGetterHandoffCommand = metadataGetterConfig.enabled
+        ? (metadataGetterType === 'lpmaeg'
+            ? createLPMAEGHandoffCommand({ ...metadataGetterConfig, detailLink: metadataGetterDetailLink }, outputDirectory)
+            : createMMEHandoffCommand(metadataGetterConfig, outputDirectory))
         : '';
     const completionCommand = createCompletionCommand(quoteChar);
 
@@ -635,8 +724,8 @@ async function createCommand(json, key_string = '') {
         subtitleCompletionCommand,
         subtitleSidecarNamingCommand,
         cleanupCommand,
-        lpmaegStartCommand,
-        lpmaegHandoffCommand,
+        metadataGetterStartCommand,
+        metadataGetterHandoffCommand,
         completionCommand,
     ].filter(Boolean).join(' && ');
 }
@@ -791,11 +880,8 @@ document.addEventListener('DOMContentLoaded', async function () {
     use_single_quotes.checked = await SettingsManager.getUseSingleQuotes();
     downloader_name.value = await SettingsManager.getExecutableName();
     downloader_args.value = await SettingsManager.getAdditionalArguments();
-    const lpmaegConfig = await SettingsManager.getLPMAEGConfig();
-    lpmaeg_enabled.checked = lpmaegConfig.enabled;
-    lpmaeg_detail_link.value = lpmaegConfig.detailLink;
-    lpmaeg_project_folder.value = lpmaegConfig.projectFolder;
-    await refreshLPMAEGStatus();
+    metadata_getter_type.value = await SettingsManager.getSelectedMetadataGetter();
+    await loadSelectedMetadataGetterConfig();
     SettingsManager.setSelectedDeviceType(await SettingsManager.getSelectedDeviceType());
     await DeviceManager.loadSetAllWidevineDevices();
     await DeviceManager.selectWidevineDevice(await DeviceManager.getSelectedWidevineDevice());

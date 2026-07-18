@@ -40,14 +40,13 @@ before it is committed.
   plus a final success message after cleanup.
 - Document macOS Tahoe 26.5.2 with Firefox 152.0.6 as this fork's verified
   macOS development and test environment.
-- Add an opt-in macOS/zsh handoff to the separately installed Live Performance
-  Metadata and Extras Getter (LPMAEG), with local-only setup storage, a required
-  public detail-page link, and safe existing-output skipping.
-- Add a compact LPMAEG setup card directly below Command options, along with a
-  modern light/dark popup layout and a new unified media/metadata toolbar and
-  popup icon set.
+- Add a compact Metadata and Extras Getter card directly below Command options,
+  with a one-choice dropdown for LPMAEG or MME, separate saved setup for each,
+  and the same safe handoff arguments.
+- Refresh the popup with a modern light/dark layout and a unified
+  media/metadata toolbar and popup icon set.
 - Add locally remembered Hide/Show controls for popup settings, device, command,
-  and LPMAEG cards, reducing scrolling without changing captured-key behavior.
+  and metadata-getter cards, reducing scrolling without changing captured-key behavior.
 - Rename captured subtitle sidecars to Jellyfin's video-stem-plus-language
   convention (for example, `Once.en_us.srt`) and preserve that association when
   the optional LPMAEG handoff renames a generic downloader video.

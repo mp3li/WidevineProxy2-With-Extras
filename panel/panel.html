@@ -94,33 +94,38 @@
             </div>
         </section>
 
-        <section class="card handoff-card" aria-labelledby="lpmaeg-heading" data-collapsible-section="lpmaeg">
+        <section class="card handoff-card" aria-labelledby="metadata-getter-heading" data-collapsible-section="metadata-getter">
             <div class="card-heading">
                 <div>
                     <p class="eyebrow">Optional handoff</p>
-                    <h2 id="lpmaeg-heading">Live Performance Metadata and Extras Getter</h2>
+                    <h2 id="metadata-getter-heading">Metadata and Extras Getter</h2>
                 </div>
                 <div class="heading-actions">
-                    <label class="check-control" for="lpmaeg-enabled">
-                        <input type="checkbox" id="lpmaeg-enabled">
+                    <label class="check-control" for="metadata-getter-enabled">
+                        <input type="checkbox" id="metadata-getter-enabled">
                         <span>Use</span>
                     </label>
                     <button type="button" class="collapse-toggle secondary" aria-expanded="true">Hide</button>
                 </div>
             </div>
             <div class="card-content">
-                <p class="card-description">Uses a public detail-page link after this command completes. See repo <a href="https://github.com/mp3li/Live-Performance-Metadata-and-Extras-Getter" target="_blank" rel="noreferrer">here</a>.</p>
-                <label class="field-label" for="lpmaeg-detail-link">Public detail-page link</label>
+                <p class="card-description" id="metadata-getter-description">Uses a public detail-page link after this command completes.</p>
+                <label class="field-label" for="metadata-getter-type">Getter</label>
+                <select id="metadata-getter-type">
+                    <option value="mme">Media Metadata and Extras Getter</option>
+                    <option value="lpmaeg">Live Performance Metadata and Extras Getter</option>
+                </select>
+                <label class="field-label" for="metadata-getter-detail-link">Public detail-page link</label>
                 <div class="input-action-row">
-                    <input type="url" id="lpmaeg-detail-link" placeholder="https://example.com/detail-page">
-                    <button type="button" id="lpmaeg-clear-link" class="secondary">Clear link</button>
+                    <input type="url" id="metadata-getter-detail-link" placeholder="https://example.com/detail-page">
+                    <button type="button" id="metadata-getter-clear-link" class="secondary">Clear link</button>
                 </div>
-                <label class="field-label" for="lpmaeg-project-folder">Getter Tool Folder</label>
+                <label class="field-label" for="metadata-getter-project-folder">Getter Tool Folder</label>
                 <div class="input-action-row">
-                    <input type="text" id="lpmaeg-project-folder" placeholder="/Users/you/Live-Performance-Metadata-and-Extras-Getter">
-                    <button type="button" id="lpmaeg-clear-setup" class="secondary">Clear setup</button>
+                    <input type="text" id="metadata-getter-project-folder" placeholder="/Users/you/Media-Metadata-and-Extras-Getter">
+                    <button type="button" id="metadata-getter-clear-setup" class="secondary">Clear setup</button>
                 </div>
-                <p id="lpmaeg-status" class="handoff-status" role="status"></p>
+                <p id="metadata-getter-status" class="handoff-status" role="status"></p>
             </div>
         </section>
 
