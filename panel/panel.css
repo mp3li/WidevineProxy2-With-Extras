@@ -177,6 +177,7 @@ button.secondary:hover { background: var(--accent-soft); border-color: #a8cdf8; 
 .key-detail-row { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .key-detail-row .text-box { width: 100%; min-width: 0; min-height: 30px; padding: 5px 7px; }
 .key-detail-row a { color: var(--accent-strong); font-weight: 750; text-decoration: none; }
+.protected-sparkle { display: inline-block; margin-left: 4px; color: var(--accent-strong); font-size: 14px; line-height: 0; vertical-align: -1px; }
 .manifest-copy select { min-width: 0; }
 #command { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 

@@ -7,6 +7,18 @@ Modifies the challenge before it reaches the web player and retrieves the decryp
 This fork retains the upstream GPL-3.0 license and adds a subtitle-aware
 command workflow:
 
+- Captures unprotected HLS, DASH, and Smooth Streaming manifests too, including
+  playlists requested directly by a native media player, and generates the same
+  no-key downloader command for them. It also captures a direct `.mp4` only
+  when it is explicitly assigned to a video element, never from segment traffic.
+  Public HLS uses its master playlist when one is available and does not invoke
+  Shaka Packager. Its expanded entry reports the manifest runtime when available;
+  thumbnail VTT indexes and duplicate subtitle representations are excluded;
+  when only a JW Player media playlist is exposed, it recovers the public master
+  playlist so your requested quality can be selected; other providers fall back
+  to the highest-bitrate playlist and remove only an incompatible resolution
+  selector;
+  protected streams continue through the existing key workflow.
 - Detects actual external subtitle files from browser requests and
   subtitle-specific API or manifest data, retaining the request headers needed
   for short-lived authenticated links.
@@ -27,6 +39,9 @@ command workflow:
 - Automatically supplies the captured original BroadwayHD detail-page URL to an
   enabled LPMAEG handoff when it matches `broadwayhd.com/video/<id>`; other
   providers continue to use the manual public detail-page link field.
+- Refreshes the popup with a compact modern layout, light/dark styling,
+  remembered collapsible settings cards, a unified media/metadata icon, and
+  clearer captured-key controls.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete, maintained record of fork
 changes. New behavior is added here only after it has been verified.
@@ -94,14 +109,18 @@ Now, open the extension, click `Choose remote.json` and select the JSON file pro
 + Check `Enabled` to activate the message interception and you're done.
 
 ## Usage
-All the user has to do is to play a DRM protected video and the decryption keys should appear in the `Keys` group box (if the service is not unsupported, as stated above). \
-Keys are saved:
+Play a video in the enabled extension. Protected playback records appear in
+**Media and Keys** with a sparkle beside their URL and reveal the decryption
+keys. Public playback appears without the sparkle and provides its manifest,
+duration when available, and a no-key download command. \
+Captured media and protected-stream key records are saved:
 + Temporarily until the extension is either refreshed manually (if installed temporarily) or a removal of the keys is manually initiated.
 + Permanently in the extension's `chrome.storage.local` storage until manually wiped or exported via the command line.
 > [!NOTE]  
 > The video will not play when the interception is active, as the Widevine CDM library isn't able to decrypt the Android CDM license.
 
-+ Click the `+` button to expand the section to reveal the PSSH and keys.
++ Click the `+` button to expand a captured item. Protected media reveals the
+  PSSH and keys; public media reveals its manifest and a no-key command.
 
 ### Optional LPMAEG handoff (macOS only)
 

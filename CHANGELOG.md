@@ -13,6 +13,13 @@ before it is committed.
 
 ### Added
 
+- Capture public HLS, DASH, and Smooth Streaming manifest requests, including
+  native media-player playlist traffic, and show a no-key download command in
+  the same captured-media workflow.
+- Capture direct public `.mp4` video-element sources without treating fMP4
+  stream segments as standalone files.
+- Report the detected runtime of public HLS, DASH, and Smooth Streaming media
+  beside its generated command when the manifest provides enough information.
 - Capture external subtitle files from browser traffic, including direct file
   requests and subtitle-specific API or manifest data.
 - Preserve captured subtitle request headers with each URL so generated
@@ -50,6 +57,7 @@ before it is committed.
 
 ### Changed
 
+- Mark protected captured streams with a compact sparkle beside their URL.
 - Include captured subtitle metadata with each selectable manifest so command
   generation can handle subtitle URLs found outside the manifest itself.
 - Keep the user's Additional arguments as the authoritative N_m3u8DL-RE
@@ -75,8 +83,22 @@ before it is committed.
 
 ### Fixed
 
+- Do not mistake media chunks beneath a Smooth Streaming `.ism` path for
+  manifests; public capture now ignores those `.ts` segments.
+- Prefer a captured public HLS master playlist over its child playlists and do
+  not invoke Shaka Packager for public streams.
+- When JW Player exposes only same-media child playlists, retain the
+  highest-bitrate one and omit an incompatible resolution-based video selector.
+- Recover JW Player's public master playlist from an observed child playlist so
+  the user's requested resolution can select the closest available rendition.
+- Remove the generated `master-<name>_<timestamp>` work folder after success,
+  not only folders whose name begins with a UUID.
+- Remove N_m3u8DL-RE's newer `manifest-<name>_<timestamp>` raw-playlist work
+  folders after a successful command as well.
 - Prevent stale generated commands from being copied after command options are
   edited.
+- Exclude JW Player's thumbnail-image VTT index and collapse text-identical
+  subtitle responses to one sidecar download.
 - Deduplicate externally captured subtitle URLs before follow-up commands are
   generated.
 - Avoid treating a subtitle-list API endpoint as a downloadable subtitle file

@@ -32,7 +32,7 @@ const export_button = document.getElementById('exportLogs');
 export_button.addEventListener('click', async function() {
     const allStored = await AsyncLocalStorage.getStorage(null);
     const logs = Object.fromEntries(Object.entries(allStored).filter(
-        ([, value]) => value && typeof value === 'object' && (value.type === 'WIDEVINE' || value.type === 'CLEARKEY')
+        ([, value]) => value && typeof value === 'object' && (value.type === 'WIDEVINE' || value.type === 'CLEARKEY' || value.type === 'PUBLIC')
     ));
     SettingsManager.downloadFile(new Blob([JSON.stringify(logs)], { type: "application/json;charset=utf-8" }), "logs.json");
 });
@@ -301,6 +301,16 @@ function getOutputDirectory(additionalArgs) {
     return saveDirMatch ? (saveDirMatch[1] || saveDirMatch[2] || saveDirMatch[3]) : '.';
 }
 
+function removeIncompatibleHlsVideoSelector(additionalArgs) {
+    // A media playlist exposes one basic stream rather than resolution-labelled
+    // variants. Keep all user options except an explicit video selector that
+    // would otherwise exclude that one stream.
+    return String(additionalArgs || '')
+        .replace(/(?:^|\s)(?:-sv|--select-video)(?:\s+|=)(?:"[^"]*"|'[^']*'|\S+)/g, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+}
+
 function joinOutputPath(outputDirectory, filename) {
     return outputDirectory === '.' ? filename : `${outputDirectory.replace(/[\\/]+$/, '')}/${filename}`;
 }
@@ -412,7 +422,9 @@ function getUniqueSubtitleFiles(subtitles) {
             continue;
         }
 
-        const assetIdentity = getSubtitleAssetIdentity(subtitle);
+        const assetIdentity = subtitle.contentIdentity
+            ? `content:${subtitle.contentIdentity}`
+            : getSubtitleAssetIdentity(subtitle);
         const existing = selected.get(assetIdentity);
         if (!existing || getSubtitlePreference(subtitle) > getSubtitlePreference(existing)) {
             selected.set(assetIdentity, subtitle);
@@ -519,12 +531,18 @@ function createSubtitleSidecarNamingCommand(subtitleNames, outputDirectory, quot
 }
 
 function createWorkDirectoryCleanupCommand(outputDirectory, quoteChar) {
-    const workDirectoryPattern = 'master-????????-????-????-????-????????????_????-??-??_??-??-??';
+    const workDirectoryPatterns = [
+        'master-*_*????-??-??_??-??-??',
+        'manifest-*_*????-??-??_??-??-??',
+    ];
     return [
         'find',
         `${quoteChar}${outputDirectory}${quoteChar}`,
+        '-maxdepth 1',
         '-type d',
-        `-name ${quoteChar}${workDirectoryPattern}${quoteChar}`,
+        '\\(',
+        workDirectoryPatterns.map((pattern) => `-name ${quoteChar}${pattern}${quoteChar}`).join(' -o '),
+        '\\)',
         '-prune -exec rm -rf {} +',
     ].join(' ');
 }
@@ -555,7 +573,7 @@ function createLPMAEGHandoffCommand(config, outputDirectory) {
     ].join(' ');
 }
 
-async function createCommand(json, key_string) {
+async function createCommand(json, key_string = '') {
     const metadata = JSON.parse(json);
 
     // Based on user choice in the panel, we have the quote character that should be used in the command,
@@ -566,8 +584,11 @@ async function createCommand(json, key_string) {
     const headerString = formatHeaders(metadata.headers, '-H', quoteChar, safeQuoteChar);
 
     const executableName = await SettingsManager.getExecutableName();
-    const useShaka = await SettingsManager.getUseShakaPackager();
+    const useShaka = !metadata.isPublicMedia && await SettingsManager.getUseShakaPackager();
     const additionalArgs = await SettingsManager.getAdditionalArguments();
+    const commandArgs = metadata.isHlsPlaylistFallback
+        ? removeIncompatibleHlsVideoSelector(additionalArgs)
+        : additionalArgs;
     const lpmaegConfig = await SettingsManager.getLPMAEGConfig();
     const lpmaegDetailLink = resolveLPMAEGDetailLink(lpmaegConfig, metadata.pageUrl);
     const lpmaegValidationMessage = getLPMAEGValidationMessage(lpmaegConfig, metadata.pageUrl);
@@ -582,13 +603,13 @@ async function createCommand(json, key_string) {
         headerString,
         key_string,
         useShaka ? "--use-shaka-packager" : "",
-        additionalArgs,
+        commandArgs,
     ].filter(Boolean);
 
     const videoCommand = commandParts.join(' ');
     const subtitleCommands = createExternalSubtitleCommands(
         metadata.subtitles,
-        getOutputDirectory(additionalArgs),
+        getOutputDirectory(commandArgs),
         quoteChar,
         safeQuoteChar
     );
@@ -597,7 +618,7 @@ async function createCommand(json, key_string) {
     const subtitleStatusCommand = createSubtitleStatusCommand(subtitleCount, quoteChar);
     const subtitleSpinnerFunction = subtitleCommands.length > 0 ? createSubtitleSpinnerFunction() : '';
     const subtitleCompletionCommand = createSubtitleCompletionCommand(subtitleCount, quoteChar);
-    const outputDirectory = getOutputDirectory(additionalArgs);
+    const outputDirectory = getOutputDirectory(commandArgs);
     const subtitleSidecarNamingCommand = createSubtitleSidecarNamingCommand(subtitleNames, outputDirectory, quoteChar);
     const cleanupCommand = createWorkDirectoryCleanupCommand(outputDirectory, quoteChar);
     const lpmaegStartCommand = createLPMAEGStartCommand(lpmaegConfig, quoteChar);
@@ -620,20 +641,35 @@ async function createCommand(json, key_string) {
     ].filter(Boolean).join(' && ');
 }
 
+function formatStreamDuration(durationSeconds) {
+    const totalSeconds = Math.round(Number(durationSeconds));
+    if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+        return 'Not available';
+    }
+
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return hours > 0
+        ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+        : `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 async function refreshGeneratedCommands() {
     for (const logContainer of key_container.querySelectorAll('.log-container')) {
         const command = logContainer.querySelector('#command');
         const manifest = logContainer.querySelector('#manifest');
         const keys = logContainer.querySelector('.key-copy input');
 
-        if (command && manifest && keys) {
-            command.value = await createCommand(manifest.value, keys.value);
+        if (command && manifest) {
+            command.value = await createCommand(manifest.value, keys?.value || '');
         }
     }
 }
 
 async function appendLog(result) {
-    const key_string = result.keys.map(key => `--key ${key.kid}:${key.k}`).join(' ');
+    const isPublicMedia = result.type === 'PUBLIC';
+    const key_string = isPublicMedia ? '' : (result.keys || []).map(key => `--key ${key.kid}:${key.k}`).join(' ');
     const date = new Date(result.timestamp * 1000);
     const date_string = date.toLocaleString();
 
@@ -643,18 +679,23 @@ async function appendLog(result) {
         <button class="toggleButton">+</button>
         <div class="expandableDiv collapsed">
             <div class="always-visible key-detail-row">
-                <span class="key-detail-label">URL</span><input type="text" class="text-box" value="${result.url}">
+                <span class="key-detail-label">URL${isPublicMedia ? '' : '<span class="protected-sparkle" title="Protected stream — keys captured" aria-label="Protected stream — keys captured">✦</span>'}</span><input type="text" class="text-box" value="${result.url}">
+            </div>
+            ${isPublicMedia ? `<div class="expanded-only key-detail-row" hidden>
+                <span class="key-detail-label">Stream</span><input type="text" class="text-box" value="Public — no DRM keys required">
             </div>
             <div class="expanded-only key-detail-row" hidden>
+                <span class="key-detail-label">Duration</span><input type="text" class="text-box" value="${formatStreamDuration(result.durationSeconds)}">
+            </div>` : `<div class="expanded-only key-detail-row" hidden>
                 <span class="key-detail-label">PSSH</span><input type="text" class="text-box" value="${result.pssh_data}">
             </div>
             <div class="expanded-only key-detail-row key-copy" hidden>
                 <span class="key-detail-label">Keys</span><input type="text" class="text-box" value="${key_string}">
-            </div>
+            </div>`}
             <div class="expanded-only key-detail-row" hidden>
                 <span class="key-detail-label">Date</span><input type="text" class="text-box" value="${date_string}">
             </div>
-            ${result.manifests.length > 0 ? `<div class="expanded-only key-detail-row manifest-copy" hidden>
+            ${(result.manifests || []).length > 0 ? `<div class="expanded-only key-detail-row manifest-copy" hidden>
                 <span class="key-detail-label">Manifest</span><select id="manifest" class="text-box"></select>
             </div>
             <div class="expanded-only key-detail-row command-copy" hidden>
@@ -663,11 +704,13 @@ async function appendLog(result) {
         </div>`;
 
     const keyCopy = logContainer.querySelector('.key-copy');
-    keyCopy.addEventListener('click', () => {
-        navigator.clipboard.writeText(key_string);
-    });
+    if (keyCopy) {
+        keyCopy.addEventListener('click', () => {
+            navigator.clipboard.writeText(key_string);
+        });
+    }
 
-    if (result.manifests.length > 0) {
+    if ((result.manifests || []).length > 0) {
         const command = logContainer.querySelector('#command');
 
         const select = logContainer.querySelector("#manifest");
@@ -677,7 +720,12 @@ async function appendLog(result) {
         result.manifests.forEach((manifest) => {
             const option = new Option(
                 `[${manifest.type}] ${manifest.url}`,
-                JSON.stringify({ ...manifest, subtitles: result.subtitles || [], pageUrl: result.url })
+                JSON.stringify({
+                    ...manifest,
+                    subtitles: result.subtitles || [],
+                    pageUrl: result.url,
+                    isPublicMedia,
+                })
             );
             select.add(option);
         });
@@ -718,7 +766,7 @@ chrome.storage.onChanged.addListener(async (changes, areaName) => {
     if (areaName === 'local') {
         for (const [key, values] of Object.entries(changes)) {
             const log = values.newValue;
-            if (log && (log.type === 'WIDEVINE' || log.type === 'CLEARKEY')) {
+            if (log && (log.type === 'WIDEVINE' || log.type === 'CLEARKEY' || log.type === 'PUBLIC')) {
                 await appendLog(log);
             }
         }

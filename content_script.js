@@ -278,6 +278,16 @@
             // addSubtitleCandidate will reject unusable URL values below.
         }
 
+        // JW Player uses VTT as an image-sprite index for preview thumbnails.
+        // It has VTT timing syntax but is not a subtitle track.
+        if (isImageSpriteVtt(sourceUrl, body)) {
+            return;
+        }
+
+        const directSubtitleContentIdentity = isSubtitleFileUrl(sourceUrl)
+            ? getSubtitleContentIdentity(body)
+            : null;
+
         if (url && isSubtitleFileUrl(url)) {
             addSubtitleCandidate(candidates, url, null, sourceUrl, true);
         }
@@ -295,9 +305,173 @@
             await emitAndWaitForResponse("SUBTITLE", JSON.stringify({
                 ...candidate,
                 sourceUrl,
+                contentIdentity: candidate.observedDirectly && candidate.url === sourceUrl
+                    ? directSubtitleContentIdentity
+                    : null,
             }));
         }
     }
+
+    function isImageSpriteVtt(url, body) {
+        return /\/strips\//i.test(url || '')
+            || /\.(?:jpe?g|png|webp)#xywh=/i.test(body || '');
+    }
+
+    function getSubtitleContentIdentity(body) {
+        if (typeof body !== 'string' || body.length === 0 || body.length > 1_000_000) {
+            return null;
+        }
+
+        // Compare cue text rather than container formatting: the same track
+        // often appears once as SRT and once as WEBVTT with different timing
+        // punctuation and cue numbering.
+        const normalized = body
+            .replace(/\r/g, '')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line
+                && !/^\uFEFF?WEBVTT/i.test(line)
+                && !/^X-TIMESTAMP-MAP/i.test(line)
+                && !/^\d+$/.test(line)
+                && !/-->/.test(line)
+            )
+            .join('\n');
+        if (!normalized) {
+            return null;
+        }
+
+        let hash = 0x811c9dc5;
+        for (let index = 0; index < normalized.length; index += 1) {
+            hash ^= normalized.charCodeAt(index);
+            hash = Math.imul(hash, 0x01000193);
+        }
+        return `fnv1a-${(hash >>> 0).toString(16)}-${normalized.length}`;
+    }
+
+    const getManifestDurationSeconds = (text, manifestType) => {
+        if (manifestType === 'HLS_MASTER') {
+            return null;
+        }
+
+        if (manifestType === 'HLS_PLAYLIST') {
+            const durations = [...text.matchAll(/#EXTINF:([0-9]+(?:\.[0-9]+)?)/gi)]
+                .map((match) => Number.parseFloat(match[1]));
+            const total = durations.reduce((sum, duration) => sum + duration, 0);
+            return total > 0 ? Math.round(total) : null;
+        }
+
+        if (manifestType === 'DASH') {
+            const duration = text.match(/\bmediaPresentationDuration=["']P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?["']/i);
+            if (duration) {
+                const [, days = '0', hours = '0', minutes = '0', seconds = '0'] = duration;
+                return Math.round(Number(days) * 86400 + Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds));
+            }
+        }
+
+        if (manifestType === 'MSS') {
+            const root = text.match(/<SmoothStreamingMedia\b([^>]*)>/i)?.[1] || '';
+            const duration = root.match(/\bDuration=["'](\d+)["']/i)?.[1];
+            const timeScale = root.match(/\bTimeScale=["'](\d+)["']/i)?.[1] || '10000000';
+            if (duration && Number(timeScale) > 0) {
+                return Math.round(Number(duration) / Number(timeScale));
+            }
+        }
+
+        return null;
+    };
+
+    const getHlsMasterDurationSeconds = async (text, sourceUrl) => {
+        const lines = text.split(/\r?\n/);
+        const variantUrls = [];
+        for (let index = 0; index < lines.length; index += 1) {
+            if (!/^#EXT-X-STREAM-INF:/i.test(lines[index])) {
+                continue;
+            }
+            const uri = lines.slice(index + 1).find((line) => line.trim() && !line.startsWith('#'));
+            if (uri) {
+                variantUrls.push(new URL(uri.trim(), sourceUrl).href);
+            }
+        }
+
+        for (const variantUrl of variantUrls) {
+            try {
+                const response = await fetch(variantUrl, { credentials: 'include' });
+                if (!response.ok) {
+                    continue;
+                }
+                const duration = getManifestDurationSeconds(await response.text(), 'HLS_PLAYLIST');
+                if (duration) {
+                    return duration;
+                }
+            } catch {
+                // Try the next variant, or leave the duration unavailable.
+            }
+        }
+        return null;
+    };
+
+    const getDetectedManifestDuration = async (text, manifestType, sourceUrl) => {
+        const directDuration = getManifestDurationSeconds(text, manifestType);
+        return directDuration || (manifestType === 'HLS_MASTER'
+            ? getHlsMasterDurationSeconds(text, sourceUrl)
+            : null);
+    };
+
+    const capturedDirectVideoUrls = new Set();
+
+    const emitDirectVideoIfNeeded = async (url) => {
+        if (!url || capturedDirectVideoUrls.has(url)) {
+            return;
+        }
+
+        try {
+            const resolvedUrl = new URL(url, window.location.href).href;
+            if (!new URL(resolvedUrl).pathname.toLowerCase().endsWith('.mp4')) {
+                return;
+            }
+            capturedDirectVideoUrls.add(resolvedUrl);
+            await emitAndWaitForResponse("DIRECT_VIDEO", JSON.stringify({ url: resolvedUrl }));
+        } catch {
+            // Ignore non-URL values such as a MediaSource blob URL.
+        }
+    };
+
+    const inspectVideoElement = (video) => {
+        emitDirectVideoIfNeeded(video.currentSrc || video.src);
+        video.querySelectorAll?.('source[src]').forEach((source) => emitDirectVideoIfNeeded(source.src));
+    };
+
+    const inspectDirectVideoSources = (node) => {
+        if (!(node instanceof Element)) {
+            return;
+        }
+        if (node instanceof HTMLVideoElement) {
+            inspectVideoElement(node);
+        }
+        node.querySelectorAll?.('video').forEach(inspectVideoElement);
+        if (node instanceof HTMLSourceElement && node.parentElement instanceof HTMLVideoElement) {
+            emitDirectVideoIfNeeded(node.src);
+        }
+    };
+
+    new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.type === 'attributes') {
+                inspectDirectVideoSources(mutation.target);
+            } else {
+                mutation.addedNodes.forEach(inspectDirectVideoSources);
+            }
+        }
+    }).observe(document, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['src'],
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('video').forEach(inspectVideoElement);
+    });
 
     function emitAndWaitForResponse(type, data) {
         return new Promise((resolve) => {
@@ -429,6 +603,7 @@
                     await emitAndWaitForResponse("MANIFEST", JSON.stringify({
                         url: thisArg.responseURL,
                         type: manifest_type,
+                        durationSeconds: await getDetectedManifestDuration(body, manifest_type, thisArg.responseURL),
                     }));
                 }
 
@@ -453,7 +628,8 @@
                     if (url) {
                         await emitAndWaitForResponse("MANIFEST", JSON.stringify({
                             url,
-                            type: manifest_type
+                            type: manifest_type,
+                            durationSeconds: await getDetectedManifestDuration(text, manifest_type, url),
                         }));
                     }
                 }

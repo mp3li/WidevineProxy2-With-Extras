@@ -16,6 +16,197 @@ let requests = new Map();
 let sessions = new Map();
 let logs = [];
 const subtitleCaptureWindowMs = 60 * 1000;
+// Give an HLS master a moment to expose a media playlist and its duration
+// before presenting the single public-media entry.
+const publicManifestCaptureDelayMs = 3000;
+let protectedPages = new Map();
+let queuedPublicManifests = new Map();
+let capturedPublicManifests = new Set();
+let jwMasterRecoveries = new Map();
+
+function getManifestTypeFromUrl(url) {
+    try {
+        const pathname = new URL(url).pathname.toLowerCase();
+        if (pathname.endsWith(".m3u8")) {
+            return "HLS_PLAYLIST";
+        }
+        if (pathname.endsWith(".mpd")) {
+            return "DASH";
+        }
+        // A Smooth Streaming manifest ends at `*.ism/Manifest`. Do not match
+        // the `.ts` chunks that happen to live beneath the same `.ism` path.
+        if (/\.ism\/manifest$/i.test(pathname)) {
+            return "MSS";
+        }
+    } catch {
+        // A malformed URL cannot be a usable media manifest.
+    }
+    return null;
+}
+
+function addManifest(tabUrl, manifest) {
+    if (!tabUrl) {
+        return;
+    }
+
+    const elements = manifests.get(tabUrl) || [];
+    const existing = elements.find((element) => element.url === manifest.url);
+    if (existing) {
+        existing.headers = manifest.headers || existing.headers;
+        existing.durationSeconds = manifest.durationSeconds || existing.durationSeconds || null;
+        // The URL-only network observer sees every HLS file as a playlist.
+        // Preserve the body-aware HLS master classification when it arrives.
+        if (manifest.type === "HLS_MASTER" || existing.type !== "HLS_MASTER") {
+            existing.type = manifest.type || existing.type;
+        }
+    } else {
+        elements.push(manifest);
+        manifests.set(tabUrl, elements);
+    }
+}
+
+function getLongestManifestDuration(tabUrl) {
+    return (manifests.get(tabUrl) || []).reduce((longest, manifest) =>
+        Math.max(longest, Number(manifest.durationSeconds) || 0), 0
+    ) || null;
+}
+
+function getHlsMediaIdentity(url) {
+    try {
+        return new URL(url).pathname.match(/\/media\/([^/]+)\//i)?.[1] || null;
+    } catch {
+        return null;
+    }
+}
+
+function getHlsPlaylistBitrate(url) {
+    try {
+        const filename = new URL(url).pathname.split('/').pop() || '';
+        return Number(filename.match(/=(\d+)\.m3u8$/i)?.[1]) || 0;
+    } catch {
+        return 0;
+    }
+}
+
+async function recoverJwPlayerMaster(tabUrl, mediaId, headers) {
+    const identity = `${tabUrl}\n${mediaId}`;
+    if (!jwMasterRecoveries.has(identity)) {
+        jwMasterRecoveries.set(identity, (async () => {
+            try {
+                const response = await fetch(`https://cdn.jwplayer.com/v2/media/${encodeURIComponent(mediaId)}`);
+                if (!response.ok) {
+                    return false;
+                }
+                const metadata = await response.json();
+                const item = metadata?.playlist?.[0];
+                const masterUrl = item?.sources?.find((source) =>
+                    source?.type === 'application/vnd.apple.mpegurl' && typeof source.file === 'string'
+                )?.file;
+                if (!masterUrl) {
+                    return false;
+                }
+
+                addManifest(tabUrl, {
+                    type: 'HLS_MASTER',
+                    url: masterUrl,
+                    durationSeconds: Number(item.duration) || null,
+                    headers: headers || {},
+                });
+                queuePublicManifest(tabUrl, {
+                    type: 'HLS_MASTER',
+                    url: masterUrl,
+                    durationSeconds: Number(item.duration) || null,
+                    headers: headers || {},
+                });
+                return true;
+            } catch {
+                return false;
+            }
+        })());
+    }
+    const recovered = await jwMasterRecoveries.get(identity);
+    if (!recovered) {
+        jwMasterRecoveries.delete(identity);
+    }
+    return recovered;
+}
+
+function queuePublicManifest(tabUrl, manifest) {
+    if (!tabUrl || !manifest?.url) {
+        return;
+    }
+
+    const identity = `${tabUrl}\n${manifest.url}`;
+    if (capturedPublicManifests.has(identity) || queuedPublicManifests.has(identity)) {
+        return;
+    }
+
+    const observedAt = Date.now();
+    const timer = setTimeout(async () => {
+        queuedPublicManifests.delete(identity);
+        if (protectedPages.get(tabUrl) >= observedAt || capturedPublicManifests.has(identity)) {
+            return;
+        }
+
+        const currentManifests = manifests.get(tabUrl) || [];
+        const currentManifest = currentManifests.find((element) => element.url === manifest.url) || manifest;
+        // A master playlist is the usable public entry. Its child playlists
+        // are not separate videos and can carry stream-selection restrictions.
+        if (currentManifest.type === "HLS_PLAYLIST"
+            && currentManifests.some((element) => element.type === "HLS_MASTER")) {
+            return;
+        }
+
+        const mediaIdentity = getHlsMediaIdentity(currentManifest.url);
+        const isHlsPlaylistFallback = currentManifest.type === "HLS_PLAYLIST" && !currentManifests.some(
+            (element) => element.type === "HLS_MASTER"
+        );
+        if (isHlsPlaylistFallback && mediaIdentity) {
+            // JW Player's CDN child playlists contain no rendition list. Its
+            // public media record supplies the master, so the user's existing
+            // resolution preference can choose the closest available quality.
+            if (await recoverJwPlayerMaster(tabUrl, mediaIdentity, currentManifest.headers)) {
+                return;
+            }
+        }
+        if (isHlsPlaylistFallback && mediaIdentity) {
+            const currentBitrate = getHlsPlaylistBitrate(currentManifest.url);
+            const hasHigherBitrateSibling = currentManifests.some((element) =>
+                element.type === "HLS_PLAYLIST"
+                && getHlsMediaIdentity(element.url) === mediaIdentity
+                && getHlsPlaylistBitrate(element.url) > currentBitrate
+            );
+            if (hasHigherBitrateSibling) {
+                return;
+            }
+        }
+
+        const log = {
+            type: "PUBLIC",
+            url: tabUrl,
+            timestamp: Math.floor(Date.now() / 1000),
+            durationSeconds: getLongestManifestDuration(tabUrl),
+            manifests: [{
+                ...currentManifest,
+                isHlsPlaylistFallback,
+                headers: requests.get(currentManifest.url) || currentManifest.headers || {},
+            }],
+            subtitles: getSubtitlesNearTime(tabUrl, Date.now())
+        };
+        capturedPublicManifests.add(identity);
+        logs.push(log);
+        await AsyncLocalStorage.setStorage({[`public:${encodeURIComponent(identity)}`]: log});
+        IconManager.setNotificationIcon();
+    }, publicManifestCaptureDelayMs);
+    queuedPublicManifests.set(identity, timer);
+}
+
+function markPageProtected(tabUrl) {
+    if (!tabUrl) {
+        return;
+    }
+    protectedPages.set(tabUrl, Date.now());
+}
 
 function getSubtitleIdentity(subtitle) {
     try {
@@ -35,6 +226,41 @@ function getSubtitlesNearTime(tabUrl, timestampMs) {
     );
 }
 
+function observeManifestRequest(details) {
+    const type = getManifestTypeFromUrl(details.url);
+    if (!type || details.tabId < 0) {
+        return;
+    }
+
+    SettingsManager.getEnabled().then(async (enabled) => {
+        if (!enabled) {
+            return;
+        }
+
+        let tabUrl = "";
+        try {
+            // Match the top-level page URL used by the content-script path,
+            // even when a player makes its media request from an iframe.
+            tabUrl = (await chrome.tabs.get(details.tabId)).url || "";
+        } catch {
+            tabUrl = details.documentUrl || details.initiator || "";
+        }
+        if (!tabUrl) {
+            return;
+        }
+
+        const manifest = {
+            type,
+            url: details.url,
+            headers: requests.get(details.url) || {},
+        };
+        addManifest(tabUrl, manifest);
+        queuePublicManifest(tabUrl, manifest);
+    }).catch(() => {
+        // A request can outlive the extension's service worker state.
+    });
+}
+
 chrome.webRequest.onBeforeSendHeaders.addListener(
     function(details) {
         if (details.method === "GET") {
@@ -52,6 +278,9 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
                     }, {});
                 requests.set(details.url, headers);
             }
+            // Native media playback does not necessarily use fetch or XHR, so
+            // observe playlist requests here as well as in the page hooks.
+            observeManifestRequest(details);
         }
     },
     {urls: ["<all_urls>"]},
@@ -59,6 +288,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 );
 
 async function parseClearKey(body, sendResponse, tab_url) {
+    markPageProtected(tab_url);
     const clearkey = JSON.parse(atob(body));
 
     const formatted_keys = clearkey["keys"].map(key => ({
@@ -133,6 +363,7 @@ async function generateChallenge(body, sendResponse) {
 }
 
 async function parseLicense(body, sendResponse, tab_url) {
+    markPageProtected(tab_url);
     const license = Util.b64.decode(body);
     const signed_license_message = SignedMessage.decode(license);
 
@@ -214,6 +445,7 @@ async function generateChallengeRemote(body, sendResponse) {
 }
 
 async function parseLicenseRemote(body, sendResponse, tab_url) {
+    markPageProtected(tab_url);
     const license = Util.b64.decode(body);
     const signed_license_message = SignedMessage.decode(license);
 
@@ -282,6 +514,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     subtitles.clear();
                     return;
                 }
+
+                // An EME challenge is definitive protected-playback activity.
+                // Mark it before the license round trip so a slow server cannot
+                // briefly publish the same manifest as a public stream.
+                markPageProtected(tab_url);
 
                 try {
                     JSON.parse(atob(message.body));
@@ -358,6 +595,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 logs = [];
                 manifests.clear();
                 subtitles.clear();
+                protectedPages.clear();
+                queuedPublicManifests.forEach((timer) => clearTimeout(timer));
+                queuedPublicManifests.clear();
+                capturedPublicManifests.clear();
+                jwMasterRecoveries.clear();
                 IconManager.setDefaultIcon();
                 break;
             case "MANIFEST":
@@ -365,18 +607,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const element = {
                     type: parsed.type,
                     url: parsed.url,
+                    durationSeconds: parsed.durationSeconds || null,
                     headers: requests.has(parsed.url) ? requests.get(parsed.url) : [],
                 };
-
-                if (!manifests.has(tab_url)) {
-                    manifests.set(tab_url, [element]);
-                } else {
-                    let elements = manifests.get(tab_url);
-                    if (!elements.some(e => e.url === parsed.url)) {
-                        elements.push(element);
-                        manifests.set(tab_url, elements);
-                    }
-                }
+                addManifest(tab_url, element);
+                queuePublicManifest(tab_url, element);
+                sendResponse();
+                break;
+            case "DIRECT_VIDEO":
+                const directVideo = JSON.parse(message.body);
+                const directVideoElement = {
+                    type: "DIRECT_MP4",
+                    url: directVideo.url,
+                    headers: requests.has(directVideo.url) ? requests.get(directVideo.url) : {},
+                };
+                addManifest(tab_url, directVideoElement);
+                queuePublicManifest(tab_url, directVideoElement);
                 sendResponse();
                 break;
             case "SUBTITLE":
@@ -385,6 +631,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     url: subtitleData.url,
                     language: subtitleData.language || null,
                     observedDirectly: subtitleData.observedDirectly === true,
+                    contentIdentity: subtitleData.contentIdentity || null,
                     capturedAt: Date.now(),
                     headers: requests.has(subtitleData.url)
                         ? requests.get(subtitleData.url)
@@ -406,6 +653,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         existingSubtitle.headers = subtitleElement.headers;
                         existingSubtitle.language = subtitleElement.language || existingSubtitle.language;
                         existingSubtitle.observedDirectly ||= subtitleElement.observedDirectly;
+                        existingSubtitle.contentIdentity ||= subtitleElement.contentIdentity;
                         existingSubtitle.capturedAt = subtitleElement.capturedAt;
                     }
                 }
